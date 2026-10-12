@@ -5,8 +5,9 @@ import {
   WORLD_W, WORLD_H, GAME_W, GAME_H, PLAYER_BASE, GAME_DURATION, BOSS_TIME
 } from '../config/balance.ts';
 import { currentPhase, pickEnemy } from '../config/timeline.ts';
-import { BUFF_POOL, type PlayerStats } from '../config/upgrades.ts';
+import { BUFF_POOL, PASSIVES, type PlayerStats } from '../config/upgrades.ts';
 import { loadSave, writeSave, metaBonus } from '../core/save.ts';
+import { sfx } from '../core/audio.ts';
 import { Player } from '../game/player.ts';
 import { EnemySystem, type Enemy } from '../game/enemySystem.ts';
 import { WeaponSystem } from '../game/weaponSystem.ts';
@@ -36,6 +37,7 @@ export class GameScene extends Phaser.Scene {
   private bg!: Phaser.GameObjects.TileSprite;
 
   private stats!: PlayerStats;
+  private passives: Record<string, number> = {};   // 被动道具等级（进化钥匙）
   private elapsed = 0;
   private kills = 0;
   private gold = 0;
@@ -53,6 +55,12 @@ export class GameScene extends Phaser.Scene {
     this.bossSpawned = false;
     this.isOver = false;
     this.levelSys = new LevelSystem();
+    this.passives = {};
+
+    // 音效：浏览器自动播放策略要求先有用户手势，这里做一次性解锁
+    const unlock = () => sfx.unlock();
+    this.input.once('pointerdown', unlock);
+    this.input.keyboard?.once('keydown', unlock);
 
     // 背景：屏幕大小的滚动瓦片（跟随相机偏移）
     // 注意：不要用 4000x4000 的世界尺寸 TileSprite —— 那会创建超大渲染纹理，
@@ -94,8 +102,13 @@ export class GameScene extends Phaser.Scene {
 
     this.drops = new DropSystem(this);
     this.drops.onPickup = (kind, value) => {
-      if (kind === 'xp') this.levelSys.addXp(value, this.stats.xpMult);
-      else this.gold += value;
+      if (kind === 'xp') {
+        this.levelSys.addXp(value, this.stats.xpMult);
+        sfx.pickup();
+      } else {
+        this.gold += value;
+        sfx.coin();
+      }
     };
 
     this.inputSys = new InputSystem(this);
@@ -149,6 +162,7 @@ export class GameScene extends Phaser.Scene {
     if (!this.bossSpawned && this.elapsed >= BOSS_TIME) {
       this.bossSpawned = true;
       this.spawnEnemy('boss');
+      sfx.boss();
     }
 
     const phase = currentPhase(this.elapsed);
@@ -182,13 +196,14 @@ export class GameScene extends Phaser.Scene {
       const dx = e.x - this.player.x;
       const dy = e.y - this.player.y;
       if (dx * dx + dy * dy <= rr * rr) {
-        this.player.takeDamage(e.damage);   // 无敌帧在 Player 内部处理
+        if (this.player.takeDamage(e.damage)) sfx.hurt();   // 无敌帧在 Player 内部处理
       }
     }
   }
 
   private onEnemyKilled(e: Enemy): void {
     this.kills++;
+    sfx.kill();
     this.drops.spawn(e.x, e.y, 'xp', e.xp);
     if (Math.random() < e.goldChance) this.drops.spawn(e.x, e.y, 'gold', 1);
     if (e.isBoss) this.finish(true);
@@ -197,15 +212,33 @@ export class GameScene extends Phaser.Scene {
   private checkLevelUp(): void {
     if (this.levelSys.pending <= 0) return;
     const owned = this.weapons.owned.map(w => ({ id: w.def.id, level: w.level, maxed: w.maxed }));
-    const opts = rollUpgradeOptions(owned);
+    const opts = rollUpgradeOptions(owned, this.passives);
+    sfx.levelUp();
     this.panel.show(opts, (idx) => this.applyUpgrade(opts[idx]));
   }
 
   private applyUpgrade(opt: UpgradeOption): void {
     if (!opt) return;
     switch (opt.kind) {
-      case 'new_weapon': this.weapons.addWeapon(opt.id); break;
-      case 'weapon_level': this.weapons.upgradeWeapon(opt.id); break;
+      case 'new_weapon':
+        this.weapons.addWeapon(opt.id);
+        break;
+      case 'weapon_level':
+        this.weapons.upgradeWeapon(opt.id);
+        break;
+      case 'passive': {
+        const p = PASSIVES[opt.id];
+        if (p) {
+          this.passives[opt.id] = (this.passives[opt.id] ?? 0) + 1;
+          p.apply(this.stats);
+        }
+        break;
+      }
+      case 'evolution': {
+        // 进化是质变：换掉武器形态，给一个专门的音效
+        if (this.weapons.evolveWeapon(opt.id)) sfx.evolve();
+        break;
+      }
       case 'buff': {
         const b = BUFF_POOL.find(x => x.id === opt.id);
         if (b) b.apply(this.stats);
@@ -251,6 +284,7 @@ export class GameScene extends Phaser.Scene {
   private finish(win: boolean): void {
     if (this.isOver) return;
     this.isOver = true;
+    if (win) sfx.win(); else sfx.lose();
 
     // 局内金币入档
     const save = loadSave();

@@ -16,7 +16,7 @@ export class Player {
 
   constructor(scene: Phaser.Scene, stats: PlayerStats) {
     this.stats = stats;
-    this.sprite = scene.add.image(this.x, this.y, 'player_maid');
+    this.sprite = scene.add.image(this.x, this.y, 'player_whale');
     this.sprite.setDepth(20);
   }
 

@@ -19,7 +19,7 @@ export interface PlayerStats {
 export const BUFF_POOL: BuffDef[] = [
   { id: 'atk',   name: '锋利弹药', desc: '全局伤害 +10%',
     apply: p => { p.damageMult += 0.10; } },
-  { id: 'hp',    name: '女仆的便当', desc: '生命上限 +20，并回复 20',
+  { id: 'hp',    name: '鲸鱼饭团', desc: '生命上限 +20，并回复 20',
     apply: p => { p.maxHp += 20; p.hp = Math.min(p.maxHp, p.hp + 20); } },
   { id: 'spd',   name: '轻快步伐', desc: '移速 +8%',
     apply: p => { p.speed *= 1.08; } },
@@ -31,10 +31,24 @@ export const BUFF_POOL: BuffDef[] = [
     apply: p => { p.xpMult += 0.10; } }
 ];
 
-// 被动道具（进化配方的钥匙，第二期启用；数据结构先就位）
-export const PASSIVES: Record<string, { id: string; name: string; desc: string }> = {
-  scope:    { id: 'scope',    name: '瞄准镜',   desc: '步枪进化钥匙' },
-  maidband: { id: 'maidband', name: '女仆头饰', desc: '狙击枪进化钥匙' }
+// ---- 被动道具：进化配方的钥匙，本身也有数值收益 ----
+export interface PassiveDef {
+  id: string;
+  name: string;
+  desc: string;
+  maxLevel: number;
+  apply: (p: PlayerStats) => void;
+}
+
+export const PASSIVES: Record<string, PassiveDef> = {
+  scope: {
+    id: 'scope', name: '瞄准镜', desc: '伤害 +8%（步枪进化钥匙）', maxLevel: 5,
+    apply: p => { p.damageMult += 0.08; }
+  },
+  maidband: {
+    id: 'maidband', name: '女仆头饰', desc: '经验 +10%（狙击枪进化钥匙）', maxLevel: 5,
+    apply: p => { p.xpMult += 0.10; }
+  }
 };
 
 // ---- 局外永久强化（金币购买，存档保留）----

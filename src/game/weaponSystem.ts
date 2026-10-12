@@ -4,6 +4,7 @@ import Phaser from 'phaser';
 import { EntityPool, type Poolable } from '../core/pool.ts';
 import { WEAPONS, type WeaponDef, type WeaponLevelDef } from '../config/weapons.ts';
 import { POOL_LIMIT } from '../config/balance.ts';
+import { sfx } from '../core/audio.ts';
 import type { Player } from './player.ts';
 import type { EnemySystem, Enemy } from './enemySystem.ts';
 
@@ -16,10 +17,11 @@ export class Bullet implements Poolable {
   radius = 6;
   life = 2;
   isSniper = false;
+  splash = 0;               // 溅射半径（0 = 无溅射）
   hitUids: number[] = [];   // 已命中敌人 uid，防穿透重复扣血
   sprite!: Phaser.GameObjects.Image;
 
-  spawn(): void { this.hitUids.length = 0; this.life = 2; }
+  spawn(): void { this.hitUids.length = 0; this.life = 2; this.splash = 0; }
   despawn(): void { this.sprite.setVisible(false); }
 }
 
@@ -40,6 +42,7 @@ export class WeaponSystem {
   private finSprites: Phaser.GameObjects.Image[] = [];
   private finAngle = 0;
   private neighborBuf: Enemy[] = [];
+  private splashBuf: Enemy[] = [];   // 溅射单独用一份缓冲，避免和外层查询互相踩
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -66,6 +69,19 @@ export class WeaponSystem {
     const w = this.owned.find(o => o.def.id === id);
     if (!w || w.maxed) return false;
     w.level++;
+    return true;
+  }
+
+  // 进化：把满级武器原地替换成进化形态（保留槽位顺序）
+  evolveWeapon(fromId: string): boolean {
+    const idx = this.owned.findIndex(o => o.def.id === fromId);
+    if (idx < 0) return false;
+    const w = this.owned[idx];
+    if (!w.def.evolution) return false;
+    const target = WEAPONS[w.def.evolution.evolvesTo];
+    if (!target) return false;
+    if (this.owned.some(o => o.def.id === target.id)) return false;   // 已进化过
+    this.owned[idx] = new OwnedWeapon(target);
     return true;
   }
 
@@ -100,6 +116,9 @@ export class WeaponSystem {
 
   private fire(w: OwnedWeapon, player: Player, target: Enemy): void {
     const s = w.stats;
+    // 重武器用更沉的音色，普通枪轻快
+    if (w.def.id === 'sniper' || w.def.id === 'railgun' || w.def.id === 'fatfishCannon') sfx.sniper();
+    else sfx.shoot();
     const baseAngle = Math.atan2(target.y - player.y, target.x - player.x);
     const spread = 0.14;   // 多发时的扇形间隔
     for (let i = 0; i < s.count; i++) {
@@ -113,9 +132,10 @@ export class WeaponSystem {
       b.vy = Math.sin(a) * s.speed;
       b.damage = s.damage * player.stats.damageMult;
       b.pierce = s.pierce;
-      b.radius = w.def.id === 'sniper' ? 10 : 6;
+      b.radius = w.def.id === 'sniper' ? 10 : (s.splash ? 12 : 6);
       b.isSniper = w.def.id === 'sniper';
-      b.sprite.setTexture(b.isSniper ? 'bullet_sniper' : 'bullet');
+      b.splash = s.splash ?? 0;
+      b.sprite.setTexture(b.isSniper ? 'bullet_sniper' : (s.splash ? 'bullet_cannon' : 'bullet'));
       b.sprite.setPosition(b.x, b.y);
       b.sprite.setRotation(a);
       b.sprite.setVisible(true);
@@ -149,6 +169,21 @@ export class WeaponSystem {
 
         b.hitUids.push(e.uid);
         this.applyDamage(e, b.damage, enemies, player);
+
+        // 溅射：命中点周围的其他敌人吃 50% 伤害
+        if (b.splash > 0) {
+          this.splashBuf.length = 0;
+          enemies.hashRef.queryCircle(e.x, e.y, b.splash, this.splashBuf);
+          for (let k = 0; k < this.splashBuf.length; k++) {
+            const o = this.splashBuf[k];
+            if (o === e || !o.active) continue;
+            const sdx = o.x - e.x;
+            const sdy = o.y - e.y;
+            if (sdx * sdx + sdy * sdy > b.splash * b.splash) continue;
+            this.applyDamage(o, b.damage * 0.5, enemies, player);
+          }
+        }
+
         b.pierce--;
         if (b.pierce <= 0) { this.bulletPool.release(b); break; }
       }

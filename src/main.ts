@@ -6,6 +6,7 @@ import { BootScene } from './scenes/BootScene.ts';
 import { MenuScene } from './scenes/MenuScene.ts';
 import { GameScene } from './scenes/GameScene.ts';
 import { ResultScene } from './scenes/ResultScene.ts';
+import { sfx } from './core/audio.ts';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,          // 优先 WebGL，不支持自动降级 Canvas
@@ -28,4 +29,6 @@ const game = new Phaser.Game({
 });
 
 // 暴露实例：便于浏览器调试与自动化验证（读场景内部状态）
-(window as unknown as { __game: Phaser.Game }).__game = game;
+const dbg = window as unknown as { __game: Phaser.Game; __sfx: typeof sfx };
+dbg.__game = game;
+dbg.__sfx = sfx;

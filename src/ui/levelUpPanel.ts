@@ -10,12 +10,16 @@ const GAP = 40;
 const KIND_LABEL: Record<string, string> = {
   new_weapon: '新武器',
   weapon_level: '武器强化',
-  buff: '属性提升'
+  buff: '属性提升',
+  passive: '被动道具',
+  evolution: '★ 进 化 ★'
 };
 const KIND_COLOR: Record<string, number> = {
   new_weapon: 0x3a7bd5,
   weapon_level: 0x2f9e77,
-  buff: 0xb0762f
+  buff: 0xb0762f,
+  passive: 0x7a5cc4,
+  evolution: 0xffb020      // 进化用金边，一眼能认出来
 };
 
 interface CardView {

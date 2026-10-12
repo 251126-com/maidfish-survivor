@@ -15,7 +15,7 @@ export class MenuScene extends Phaser.Scene {
     this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x0a1420, 1);
 
     // 标题
-    this.add.text(GAME_W / 2, 70, '女仆鲨鱼 · 割草求生', {
+    this.add.text(GAME_W / 2, 70, '鲸鱼娘 · 割草求生', {
       fontFamily: 'monospace', fontSize: '44px', color: '#7fd4ff'
     }).setOrigin(0.5);
     this.add.text(GAME_W / 2, 118, '自动射击 · 走位生存 · 12 分钟撑到底', {

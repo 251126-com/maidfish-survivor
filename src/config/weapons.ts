@@ -1,5 +1,5 @@
 // 武器配置表：数据驱动。加武器只改这里，不动系统代码
-// 进化配方已预留（evolution 字段），第二期实现合成
+// evolved=true 的武器只能通过"进化"获得，不会出现在新武器候选里
 
 export interface WeaponLevelDef {
   damage: number;    // 单发伤害
@@ -8,6 +8,7 @@ export interface WeaponLevelDef {
   pierce: number;    // 穿透数
   speed: number;     // 弹速 px/s（环绕武器为角速度）
   range: number;     // 射程/环绕半径 px
+  splash?: number;   // 溅射半径 px（命中后对周围敌人造成范围伤害）
 }
 
 export interface WeaponDef {
@@ -16,7 +17,8 @@ export interface WeaponDef {
   desc: string;
   maxLevel: number;
   levels: WeaponLevelDef[];   // 索引 0 = 1级
-  // 进化（第二期）：满级 + 持有 requiredPassive 时，升级直接替换为 evolvesTo
+  evolved?: boolean;          // 进化武器：不可从升级池直接获取
+  // 进化配方：本武器满级 + 持有 requiredPassive 时，升级池出现进化选项
   evolution?: { requiredPassive: string; evolvesTo: string };
 }
 
@@ -51,7 +53,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
   },
   tail: {
     id: 'tail',
-    name: '鲨尾回旋',
+    name: '尾鳍回旋',
     desc: '尾鳍环绕自身，扫开近身敌人',
     maxLevel: 5,
     levels: [
@@ -61,6 +63,31 @@ export const WEAPONS: Record<string, WeaponDef> = {
       { damage: 20, cooldown: 0.45, count: 3, pierce: 99, speed: 3.0, range: 120 },
       { damage: 26, cooldown: 0.4, count: 4, pierce: 99, speed: 3.2, range: 135 }
     ]
-    // 鲨尾无进化，留纯数值线
+    // 无进化：纯数值成长路线
+  },
+
+  // ===== 进化武器（仅通过进化获得）=====
+  railgun: {
+    id: 'railgun',
+    name: '鲸波轨道枪',
+    desc: '进化：穿透一切，射速拉满',
+    maxLevel: 1,
+    evolved: true,
+    levels: [
+      { damage: 52, cooldown: 0.20, count: 1, pierce: 999, speed: 1700, range: 950 }
+    ]
+  },
+  fatfishCannon: {
+    id: 'fatfishCannon',
+    name: '大肥鱼炮',
+    desc: '进化：命中后炸开一片',
+    maxLevel: 1,
+    evolved: true,
+    levels: [
+      { damage: 105, cooldown: 1.0, count: 1, pierce: 3, speed: 820, range: 900, splash: 110 }
+    ]
   }
 };
+
+// 升级池用：可正常获取的武器（排除进化武器）
+export const OBTAINABLE_WEAPONS = Object.values(WEAPONS).filter(w => !w.evolved);
