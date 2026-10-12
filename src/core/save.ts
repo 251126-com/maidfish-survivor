@@ -1,5 +1,5 @@
 // 存档系统：localStorage 持久化局外成长（金币、永久强化等级、最佳记录）
-// 容错：隐私模式/禁用存储时降级到内存，不崩游戏
+// 容错分两种：存储不可用 → 内存兜底；存档损坏 → 重置为默认，不崩游戏
 
 const KEY = 'maidfish-survivor-save-v1';
 
@@ -19,13 +19,22 @@ function defaultSave(): SaveData {
   };
 }
 
-// 内存兜底（localStorage 不可用时）
+// 内存兜底（localStorage 完全不可用时使用）
 let memoryFallback: SaveData | null = null;
 
 export function loadSave(): SaveData {
+  let raw: string | null = null;
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return defaultSave();
+    raw = localStorage.getItem(KEY);
+  } catch (e) {
+    // 存储不可用（隐私模式等）→ 用内存兜底
+    console.warn('[save] 存储不可用，使用内存存档', e);
+    return memoryFallback ?? defaultSave();
+  }
+
+  if (!raw) return defaultSave();
+
+  try {
     const parsed = JSON.parse(raw) as Partial<SaveData>;
     const base = defaultSave();
     // 逐字段合并，容忍旧存档缺字段
@@ -40,8 +49,9 @@ export function loadSave(): SaveData {
       }
     };
   } catch (e) {
-    console.warn('[save] 读取失败，使用默认存档', e);
-    return memoryFallback ?? defaultSave();
+    // 存档损坏 → 重置为默认，避免带病运行
+    console.warn('[save] 存档损坏，已重置为默认存档', e);
+    return defaultSave();
   }
 }
 

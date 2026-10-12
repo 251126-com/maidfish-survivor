@@ -12,7 +12,15 @@ export class EntityPool<T extends Poolable> {
   readonly live: T[] = [];   // 活跃对象，遍历时只走这个数组
   private _peak = 0;
 
-  constructor(private factory: () => T, private limit: number) {}
+  private factory: () => T;
+  private limit: number;
+
+  // 注意：不使用 TS 参数属性（constructor(private x)），
+  // 因为 Node 的 strip-only 模式不支持该语法，测试无法直接跑 TS 源码
+  constructor(factory: () => T, limit: number) {
+    this.factory = factory;
+    this.limit = limit;
+  }
 
   get activeCount(): number { return this.live.length; }
   get peak(): number { return this._peak; }
