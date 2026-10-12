@@ -58,7 +58,7 @@ const panelState = () => page.evaluate(() => {
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1600);
 const ver = await page.evaluate(() => window.__VERSION);
-check('版本标记 __VERSION=0.5.0', ver === '0.5.0', `实际 ${ver}`);
+check('版本标记 __VERSION=0.5.0', ver === '0.5.1', `实际 ${ver}`);
 
 await click(640, 230);            // 开始游戏
 await page.waitForTimeout(1800);

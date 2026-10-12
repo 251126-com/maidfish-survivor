@@ -1,0 +1,192 @@
+// v0.5.1 升级面板布局回归：真正的"文字叠印"验收
+// 回归目标（v0.5.0 根因）：show() 用 `y: [a,b,c,d,e]` 数组 tween，
+//    Phaser 视为单目标关键帧路径 → 全部对象被 tween 到数组最后一项，
+//    文字在卡片中心叠印、卡片背景整体下移。
+// 本脚本：触发升级面板 → 等 tween 完成 → 断言每个对象停在各自的基准 y、
+//    kind/name/desc 纵向分区不重叠、名称/描述文字高度不溢出分区、三卡点击区稳定，
+//    并生成真实验收截图（桌面 + 手机横屏/竖屏）。
+// 用法：CHROME_PATH=/usr/bin/chromium E2E_URL=http://127.0.0.1:4173/ node e2e/verify-levelup-layout.mjs
+import { chromium } from 'playwright';
+import fs from 'node:fs';
+
+const URL = process.env.E2E_URL || 'http://127.0.0.1:4173/';
+const OUT = 'e2e/shots';
+fs.mkdirSync(OUT, { recursive: true });
+const errors = [];
+const isNoise = (t) => /favicon|404 \(Not Found\)/.test(t);
+const results = [];
+const check = (name, ok, detail = '') => { results.push([name, !!ok, detail]); console.log(`${ok ? '✔' : '✘'} ${name}${detail !== '' ? '  [' + detail + ']' : ''}`); };
+
+const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || undefined, args: ['--no-sandbox','--disable-dev-shm-usage'] });
+
+const geoms = (page) => page.evaluate(() => {
+  const s = window.__game.scene.getScene('Game');
+  const p = s.panel;
+  const g = p.cards.map((c, i) => {
+    const L = p.layout.cards[i];
+    const z = L.zone;
+    return {
+      i,
+      card: { cx: c.bg.x, cy: c.bg.y, w: c.bg.displayWidth, h: c.bg.displayHeight },
+      expect: { cy: L.cy, kindY: z.kindY, nameY: z.nameY, descY: z.descY },
+      actual: {
+        kind: c.kind.y, name: c.name.y, desc: c.desc.y,
+        kindH: c.kind.height, nameH: c.name.height, descH: c.desc.height,
+        nameW: c.name.width, descW: c.desc.width
+      },
+      zone: z,
+      texts: { kind: c.kind.text, name: c.name.text, desc: c.desc.text }
+    };
+  });
+  return { visible: p.visible, cards: g };
+});
+
+
+// 注入"长中文"升级选项：覆盖用户截图场景（真实滚到的短文案外，还要保证长文案不叠印/不越界）
+const LONG_OPTS = [
+  { kind: 'evolution', id: 'railgun', name: '大肥鱼磁暴轨道歼星炮改三型', desc: '进化：穿透一切，射速拉满，并且获得额外的暴击率加成与更远的射程，再加一层鲸鱼护盾叠满更持久' },
+  { kind: 'weapon_level', id: 'sniper', name: '大肥鱼狙击枪 Lv.5 终级形态完全解放', desc: '高伤慢速，贯穿一排并附带小型爆炸，对密集敌群造成范围伤害，代价是换弹时间略长' },
+  { kind: 'passive', id: 'scope', name: '超长名字：女仆头饰瞄准镜终极进化再进化', desc: '伤害 +8% 且经验 +10%，同时扩大拾取范围，每级再额外叠加 2% 的暴击与 1% 移速，越叠越强' }
+];
+
+async function injectLongCn(page, label) {
+  await page.evaluate((opts) => {
+    const s = window.__game.scene.getScene('Game');
+    s.panel.show(opts, () => {});
+  }, LONG_OPTS.map(o => ({ ...o })));
+  await page.waitForTimeout(700);
+  const info = await geoms(page);
+  const ok = info.cards.length === 3 && info.cards.every((c) => {
+    const top = c.card.cy - c.card.h / 2;
+    const bottom = c.card.cy + c.card.h / 2;
+    // 1) 三个文本落在各自分区且互不交叠
+    const kindsOk = Math.abs(c.actual.kind - c.expect.kindY) < 0.001;
+    const namesOk = Math.abs(c.actual.name - c.expect.nameY) < 0.001;
+    const descsOk = Math.abs(c.actual.desc - c.expect.descY) < 0.001;
+    const nameTop = c.actual.name - c.actual.nameH / 2;
+    const nameBottom = c.actual.name + c.actual.nameH / 2;
+    const descTop = c.actual.desc - c.actual.descH / 2;
+    const descBottom = c.actual.desc + c.actual.descH / 2;
+    // 2) 不越卡片边界
+    const zonesOk = c.actual.nameH <= c.zone.nameMaxH + 0.01 && c.actual.descH <= c.zone.descMaxH + 0.01;
+    const orderOk = nameTop >= top && nameBottom <= bottom && descTop >= nameBottom - 0.01 && descBottom <= bottom + 0.01;
+    return kindsOk && namesOk && descsOk && zonesOk && orderOk;
+  });
+  await page.screenshot({ path: `${OUT}/${label}-longcn.png` });
+  return ok;
+}
+
+async function runViewport(ctx, vp, label) {
+  const page = await ctx.newPage({ viewport: { width: vp.w, height: vp.h } });
+  page.on('pageerror', e => errors.push(`[${label} pageerror] ${e.message}`));
+  page.on('console', m => { if (m.type() === 'error' && !isNoise(m.text())) errors.push(`[${label} console.error] ${m.text()}`); });
+
+  await page.goto(URL, { waitUntil: 'load' });
+  await page.waitForTimeout(1500);
+
+  const cvs = await page.locator('canvas').first().boundingBox();
+  const l2p = (lx, ly) => ({ x: cvs.x + (lx / 1280) * cvs.width, y: cvs.y + (ly / 720) * cvs.height });
+
+  // 进入游戏
+  const p0 = l2p(640, 230);
+  await page.mouse.click(p0.x, p0.y);
+  await page.waitForTimeout(1800);
+
+  // 触发升级
+  await page.evaluate(() => {
+    const s = window.__game.scene.getScene('Game');
+    s.levelSys.addXp(s.levelSys.need, 1);
+    s.checkLevelUp();
+  });
+  await page.waitForTimeout(700);   // 等 260ms tween + 延迟完成
+
+  const info = await geoms(page);
+  check(`${label}: 升级面板已打开`, info.visible === true);
+  check(`${label}: 卡片与文字均未叠印（kind/name/desc 不同 y 且间距足够）`,
+    info.cards.every(c =>
+      (c.actual.desc - c.actual.name > 90) && (c.actual.name - c.actual.kind > 40)
+    ),
+    info.cards.map(c => `k=${c.actual.kind.toFixed(0)} n=${c.actual.name.toFixed(0)} d=${c.actual.desc.toFixed(0)}`).join(' | '));
+
+  // 核心回归：每个对象停在各自基准 y（根因断言）
+  check(`${label}: 各对象停在独立基准 y（bg/kind/name/desc 各归其位）`,
+    info.cards.every(c =>
+      Math.abs(c.actual.kind - c.expect.kindY) < 0.001 &&
+      Math.abs(c.actual.name - c.expect.nameY) < 0.001 &&
+      Math.abs(c.actual.desc - c.expect.descY) < 0.001 &&
+      Math.abs(c.card.cy - c.expect.cy) < 0.001
+    ),
+    info.cards.map(c => `bg=${c.card.cy.toFixed(0)}/${c.expect.cy} k=${c.actual.kind.toFixed(0)}/${c.expect.kindY} n=${c.actual.name.toFixed(0)}/${c.expect.nameY} d=${c.actual.desc.toFixed(0)}/${c.expect.descY}`).join(' | '));
+
+  // 文字不溢出：文字高度 <= 分区高度；文字带在卡片内
+  check(`${label}: 名称/描述文字不溢出分区`,
+    info.cards.every(c =>
+      c.actual.nameH <= c.zone.nameMaxH + 0.01 &&
+      c.actual.descH <= c.zone.descMaxH + 0.01
+    ),
+    info.cards.map(c => `name ${c.actual.nameH.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)} desc ${c.actual.descH.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}`).join(' | '));
+  check(`${label}: 名称/描述文字带不越卡片边界`,
+    info.cards.every(c => {
+      const top = c.card.cy - c.card.h / 2;
+      const bottom = c.card.cy + c.card.h / 2;
+      const nameTop = c.actual.name - c.actual.nameH / 2;
+      const nameBottom = c.actual.name + c.actual.nameH / 2;
+      const descTop = c.actual.desc - c.actual.descH / 2;
+      const descBottom = c.actual.desc + c.actual.descH / 2;
+      return nameTop >= top && nameBottom <= bottom && descTop >= nameBottom && descBottom <= bottom;
+    }),
+    info.cards.map(c => `name[${(c.actual.name - c.actual.nameH / 2).toFixed(0)},${(c.actual.name + c.actual.nameH / 2).toFixed(0)}] desc[${(c.actual.desc - c.actual.descH / 2).toFixed(0)},${(c.actual.desc + c.actual.descH / 2).toFixed(0)}] card[${(c.card.cy - c.card.h / 2).toFixed(0)},${(c.card.cy + c.card.h / 2).toFixed(0)}]`).join(' | '));
+
+  // 三卡点击区域：卡片矩形互不交叠且全部在画布内
+  check(`${label}: 三卡点击区域稳定且互不遮挡、不出屏`,
+    info.cards.every((c, i) => {
+      const okIn = c.card.cx - c.card.w / 2 >= 0 && c.card.cx + c.card.w / 2 <= 1280 && c.card.cy - c.card.h / 2 >= 0 && c.card.cy + c.card.h / 2 <= 720;
+      for (let j = i + 1; j < info.cards.length; j++) {
+        const o = info.cards[j];
+        if (c.card.cx < o.card.cx + o.card.w / 2 && o.card.cx < c.card.cx + c.card.w / 2 &&
+            c.card.cy < o.card.cy + o.card.h / 2 && o.card.cy < c.card.cy + c.card.h / 2) return false;
+      }
+      return okIn;
+    }),
+    info.cards.map(c => `[${c.card.cx.toFixed(0)},${c.card.cy.toFixed(0)},${c.card.w.toFixed(0)}x${c.card.h.toFixed(0)}]`).join(' | '));
+
+  await page.screenshot({ path: `${OUT}/${label}-levelup.png` });
+
+  // 点击可选区域有效：点中间卡能真实选择并关闭面板
+  const mid = info.cards[1];
+  const pm = l2p(mid.card.cx, mid.card.cy);
+  await page.mouse.click(pm.x, pm.y);
+  await page.waitForTimeout(500);
+  const after = await page.evaluate(() => window.__game.scene.getScene('Game').panel.visible);
+  check(`${label}: 点选中间卡后面板关闭（点击区域有效）`, after === false);
+
+  // 长中文注入验收（同一视口：真实滚动选项 + 长中文极值）
+  const longOk = await injectLongCn(page, label);
+  check(`${label}: 长中文 kind/name/desc 各归其位、不越界不交叠（含缩字）`, longOk,
+    info.cards.map(c => `nameH=${c.actual.nameH.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)} descH=${c.actual.descH.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}`).join(' | '));
+  await page.evaluate(() => { const s = window.__game.scene.getScene('Game'); s.panel.hide(); });
+  await page.waitForTimeout(300);
+  await page.close();
+}
+
+// 桌面 + 手机横屏（用户最可能设备比例）+ 手机竖屏
+const desktop = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+await runViewport(desktop, { w: 1280, h: 720 }, '90-desktop-levelup');
+
+const phoneLand = await browser.newContext({ viewport: { width: 932, height: 430 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
+await runViewport(phoneLand, { w: 932, h: 430 }, '91-phone-landscape-levelup');
+
+const phonePort = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
+await runViewport(phonePort, { w: 390, h: 844 }, '92-phone-portrait-levelup');
+
+const flatPort = await browser.newContext({ viewport: { width: 360, height: 640 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+await runViewport(flatPort, { w: 360, h: 640 }, '93-flat-portrait-levelup');
+
+await browser.close();
+
+const failed = results.filter(r => !r[1]).length;
+console.log(`\n===== 升级面板布局验收结果 =====`);
+for (const [n, ok, d] of results) console.log(`${ok ? '✔' : '✘'} ${n}${d ? '  [' + d + ']' : ''}`);
+if (errors.length) { console.log('--- 页面/控制台错误 ---'); for (const e of errors) console.log(e); }
+console.log(failed === 0 && errors.length === 0 ? 'pass' : `FAIL (${failed} failed, ${errors.length} page errors)`);
+process.exit(failed === 0 && errors.length === 0 ? 0 : 1);

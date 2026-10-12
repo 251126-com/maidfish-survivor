@@ -1,12 +1,15 @@
 // 升级三选一面板：全屏遮罩 + 三张可点击卡片
-// v0.5.0 布局修复：
-//  - 每个子对象（kind/name/desc）有独立基准坐标，淡入 tween 只做整体轻微上浮，
-//    不再把所有文字 tween 到同一 y（v0.4.0：描述覆盖标题 bug 的根因）。
-//  - 描述按可用高度动态缩字号 + wordWrap 换行，保证不溢出卡片、不压到名称。
-//  - 卡片宽随 GAME_W 自适应收缩，窄屏（横屏手机）不越界。
+//
+// v0.5.1 布局修复（根因在 v0.5.0 引入）：
+//  - v0.5.0 用 `y: [bgY, kindY, nameY, descY]` 数组想让每个对象各归其位，
+//    但 Phaser 把属性数组当作"单目标关键帧路径"（start=value[0], end=value[last]），
+//    5 个对象(含卡片背景)全部被 tween 到 descY=546 → 文字在卡片中心叠印。实测确认。
+//  - 本版本：每个对象用独立 tween 归位到自己的基准 y（无数组语义歧义），
+//    并由纯布局层 panelLayout 提供纵向分区（kind/name/desc），运行时用
+//    Phaser 真实 canvas 度量对名称/描述自适应换行缩字，保证不越界、不交叠。
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../config/balance.ts';
-import { computeCardLayout, fitDescStyle, type PanelLayout } from './panelLayout.ts';
+import { computeCardLayout, type PanelLayout, type CardBox } from './panelLayout.ts';
 import type { UpgradeOption } from '../game/levelUp.ts';
 
 const KIND_LABEL: Record<string, string> = {
@@ -24,13 +27,17 @@ const KIND_COLOR: Record<string, number> = {
   evolution: 0xffb020      // 进化用金边，一眼能认出来
 };
 
+// 名称/描述的起始字号与最小字号（over fit 后仍由运行时 canvas 度量兜底）
+const NAME_FONT = { start: 22, min: 15 };
+const DESC_FONT = { start: 15, min: 11 };
+
 interface CardView {
   bg: Phaser.GameObjects.Rectangle;
   border: Phaser.GameObjects.Rectangle;
   kind: Phaser.GameObjects.Text;
   name: Phaser.GameObjects.Text;
   desc: Phaser.GameObjects.Text;
-  base: { bgY: number; kindY: number; nameY: number; descY: number };
+  base: CardBox;
 }
 
 export class LevelUpPanel {
@@ -55,28 +62,27 @@ export class LevelUpPanel {
 
     for (let i = 0; i < this.layout.cards.length; i++) {
       const c = this.layout.cards[i];
-      const cardW = this.layout.cardW;
-      const cardH = this.layout.cardH;
+      const z = c.zone;
 
-      const bg = scene.add.rectangle(c.cx, c.cy, cardW, cardH, 0x101f33, 0.98)
+      const bg = scene.add.rectangle(c.cx, c.cy, this.layout.cardW, this.layout.cardH, 0x101f33, 0.98)
         .setDepth(201).setScrollFactor(0).setStrokeStyle(3, 0x3d6c9e)
         .setInteractive({ useHandCursor: true });
 
-      const border = scene.add.rectangle(c.cx, c.cy, cardW, cardH)
+      const border = scene.add.rectangle(c.cx, c.cy, this.layout.cardW, this.layout.cardH)
         .setDepth(202).setScrollFactor(0).setFillStyle(0x000000, 0);
 
-      const kind = scene.add.text(c.cx, c.kindY, '', {
+      const kind = scene.add.text(c.cx, z.kindY, '', {
         fontFamily: 'monospace', fontSize: '15px', color: '#9fd8ff'
       }).setOrigin(0.5).setDepth(202).setScrollFactor(0);
 
-      const name = scene.add.text(c.cx, c.nameY, '', {
-        fontFamily: 'monospace', fontSize: '22px', color: '#ffffff',
-        align: 'center', wordWrap: { width: cardW - 40 }
+      const name = scene.add.text(c.cx, z.nameY, '', {
+        fontFamily: 'monospace', fontSize: `${NAME_FONT.start}px`, color: '#ffffff',
+        align: 'center', wordWrap: { width: z.nameMaxW }
       }).setOrigin(0.5).setDepth(202).setScrollFactor(0);
 
-      const desc = scene.add.text(c.cx, c.descY, '', {
-        fontFamily: 'monospace', fontSize: '15px', color: '#a8c4dc',
-        align: 'center', wordWrap: { width: cardW - 50 }
+      const desc = scene.add.text(c.cx, z.descY, '', {
+        fontFamily: 'monospace', fontSize: `${DESC_FONT.start}px`, color: '#a8c4dc',
+        align: 'center', wordWrap: { width: z.descMaxW }
       }).setOrigin(0.5).setDepth(202).setScrollFactor(0);
 
       bg.on('pointerover', () => bg.setStrokeStyle(3, 0x7fd4ff));
@@ -85,13 +91,29 @@ export class LevelUpPanel {
         if (this.onPick) this.onPick(i);
       });
 
-      this.cards.push({
-        bg, border, kind, name, desc,
-        base: { bgY: c.cy, kindY: c.kindY, nameY: c.nameY, descY: c.descY }
-      });
+      this.cards.push({ bg, border, kind, name, desc, base: c });
     }
 
     this.setVisible(false);
+  }
+
+  // 把文本放进 maxW x maxH 区域：用 Phaser 真实 canvas 度量 setText 后的宽高，
+  // 放不下就逐字号缩小，保证不溢出（比纯估算可靠，兼容任意设备字体回退）。
+  private fitTextToZone(
+    t: Phaser.GameObjects.Text,
+    text: string,
+    maxW: number,
+    maxH: number,
+    start: number,
+    min: number
+  ): void {
+    let fs = start;
+    for (;;) {
+      t.setStyle({ fontSize: `${fs}px`, wordWrap: { width: maxW } });
+      t.setText(text);
+      if (t.height <= maxH + 0.01 || fs <= min) break;
+      fs--;
+    }
   }
 
   private setCardAlpha(c: CardView, a: number): void {
@@ -117,8 +139,6 @@ export class LevelUpPanel {
 
   show(options: UpgradeOption[], onPick: (index: number) => void): void {
     this.onPick = onPick;
-    const cardW = this.layout.cardW;
-    const cardH = this.layout.cardH;
     for (let i = 0; i < this.cards.length; i++) {
       const c = this.cards[i];
       const o = options[i];
@@ -127,17 +147,12 @@ export class LevelUpPanel {
         c.kind.setVisible(false); c.name.setVisible(false); c.desc.setVisible(false);
         continue;
       }
+      const z = c.base.zone;
       c.kind.setText(KIND_LABEL[o.kind] ?? '');
-      c.name.setText(o.name);
-      // 描述：按"名称下方 → 卡片底边留 16px"的可用高度动态缩字号，绝不溢出卡片
-      const descTop = c.base.descY;
-      const descMaxH = (c.base.bgY + cardH / 2 - 10) - descTop;
-      const fit = fitDescStyle(o.desc, cardW - 50, Math.max(40, descMaxH), 15, 12);
-      c.desc.setStyle({
-        fontSize: `${fit.fontSize}px`,
-        wordWrap: { width: cardW - 50 }
-      });
-      c.desc.setText(o.desc);
+      // 名称：在 name 分区内自适应换行/缩字，绝不压到 kind 或 desc
+      this.fitTextToZone(c.name, o.name, z.nameMaxW, z.nameMaxH, NAME_FONT.start, NAME_FONT.min);
+      // 描述：在 desc 分区内自适应换行/缩字，绝不溢出卡片
+      this.fitTextToZone(c.desc, o.desc, z.descMaxW, z.descMaxH, DESC_FONT.start, DESC_FONT.min);
       c.bg.setStrokeStyle(3, KIND_COLOR[o.kind] ?? 0x3d6c9e);
     }
     this.title.setVisible(true);
@@ -145,23 +160,31 @@ export class LevelUpPanel {
     for (let i = 0; i < options.length; i++) {
       const c = this.cards[i];
       if (!c) continue;
-      // 全部归位到独立基准坐标
       c.bg.setVisible(true); c.kind.setVisible(true);
       c.name.setVisible(true); c.desc.setVisible(true);
-      this.setCardAlpha(c, 0);
-      // 整体 +24 轻微下移作为淡入起点，然后 tween 回自己的基准高度（各自独立，不重叠）
+      // 淡入起点：整体 +24 下移，然后各自 tween 回自己的基准 y。
+      // ⚠️ 不要用 `y: [a,b,c,d,e]` 数组语法——Phaser 会当作单目标关键帧路径，
+      // 把所有对象 tween 到数组最后一项（v0.5.0 叠印 bug 的根因）。
       const off = 24;
       const base = c.base;
-      c.bg.y = base.bgY + off; c.border.y = base.bgY + off;
-      c.kind.y = base.kindY + off; c.name.y = base.nameY + off; c.desc.y = base.descY + off;
-      this.scene.tweens.add({
-        targets: [c.bg, c.border, c.kind, c.name, c.desc],
-        alpha: 1,
-        y: [base.bgY, base.bgY, base.kindY, base.nameY, base.descY],
-        duration: 260,
-        ease: 'Cubic.easeOut',
-        delay: i * 70
-      });
+      type PaneObj = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text;
+      const entries: Array<[PaneObj, number]> = [
+        [c.bg, base.cy], [c.border, base.cy],
+        [c.kind, base.zone.kindY], [c.name, base.zone.nameY], [c.desc, base.zone.descY]
+      ];
+      this.setCardAlpha(c, 0);
+      for (const [obj, finalY] of entries) {
+        obj.setAlpha(0);
+        obj.y = finalY + off;
+        this.scene.tweens.add({
+          targets: obj,
+          alpha: 1,
+          y: finalY,
+          duration: 260,
+          ease: 'Cubic.easeOut',
+          delay: i * 70
+        });
+      }
     }
     this.visible = true;
   }
