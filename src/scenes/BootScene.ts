@@ -5,9 +5,14 @@ import Phaser from 'phaser';
 export class BootScene extends Phaser.Scene {
   constructor() { super('Boot'); }
 
+  preload(): void {
+    // 正式角色素材：用户设计图抠出的透明 PNG（保留白色头饰/围裙）
+    this.load.image('player_whale', 'assets/player_whale.png');
+  }
+
   create(): void {
     this.makeBackground();
-    this.makePlayer();
+    // 角色贴图已在 preload 从正式素材加载，不再程序化生成
     this.makeEnemies();
     this.makeProjectiles();
     this.makeDrops();
@@ -24,56 +29,6 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0x16283f, 1);
     g.fillCircle(32, 32, 1.5);
     g.generateTexture('bg_tile', 64, 64);
-    g.destroy();
-  }
-
-  // 主角：鲸鱼娘 —— 白蓝配色、横向鲸尾、蓝发呆毛（56x56）
-  private makePlayer(): void {
-    const g = this.add.graphics();
-
-    // 鲸鱼尾鳍（横向，身后左侧）—— 鲸类特征
-    g.fillStyle(0x8fd8ff, 1);
-    g.fillTriangle(2, 18, 20, 30, 2, 30);
-    g.fillTriangle(2, 42, 20, 30, 2, 30);
-    g.fillStyle(0xd8f2ff, 0.9);
-    g.fillTriangle(6, 23, 17, 30, 6, 30);
-    g.fillTriangle(6, 37, 17, 30, 6, 30);
-
-    // 白色连衣裙
-    g.fillStyle(0xf2f8ff, 1);
-    g.fillRoundedRect(20, 34, 20, 19, 7);
-    // 裙摆蓝色滚边
-    g.fillStyle(0x7fc8ff, 1);
-    g.fillRoundedRect(20, 48, 20, 5, 2);
-
-    // 领结
-    g.fillStyle(0x63b9ff, 1);
-    g.fillTriangle(30, 35, 26, 32, 26, 38);
-    g.fillTriangle(30, 35, 34, 32, 34, 38);
-
-    // 头
-    g.fillStyle(0xffe3d0, 1);
-    g.fillCircle(30, 22, 12);
-
-    // 蓝发 + 刘海
-    g.fillStyle(0x7fc8ff, 1);
-    g.fillCircle(30, 15, 13);
-    g.fillRect(17, 14, 26, 10);
-
-    // 呆毛
-    g.fillTriangle(30, 1, 26, 11, 34, 11);
-
-    // 眼睛
-    g.fillStyle(0x1b2a44, 1);
-    g.fillCircle(25, 23, 2.5);
-    g.fillCircle(35, 23, 2.5);
-
-    // 腮红
-    g.fillStyle(0xffb3b3, 0.85);
-    g.fillCircle(21, 26, 2.5);
-    g.fillCircle(39, 26, 2.5);
-
-    g.generateTexture('player_whale', 56, 56);
     g.destroy();
   }
 

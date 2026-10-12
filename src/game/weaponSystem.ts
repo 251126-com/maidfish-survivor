@@ -5,6 +5,8 @@ import { EntityPool, type Poolable } from '../core/pool.ts';
 import { WEAPONS, type WeaponDef, type WeaponLevelDef } from '../config/weapons.ts';
 import { POOL_LIMIT } from '../config/balance.ts';
 import { sfx } from '../core/audio.ts';
+import { vibrate } from '../core/vibration.ts';
+import { DamageTextSystem } from './damageText.ts';
 import type { Player } from './player.ts';
 import type { EnemySystem, Enemy } from './enemySystem.ts';
 
@@ -39,6 +41,7 @@ export class WeaponSystem {
   private scene: Phaser.Scene;
   readonly owned: OwnedWeapon[] = [];
   private bulletPool: EntityPool<Bullet>;
+  readonly damageText: DamageTextSystem;
   private finSprites: Phaser.GameObjects.Image[] = [];
   private finAngle = 0;
   private neighborBuf: Enemy[] = [];
@@ -53,6 +56,7 @@ export class WeaponSystem {
       b.sprite.setDepth(15);
       return b;
     }, POOL_LIMIT.bullet);
+    this.damageText = new DamageTextSystem(scene);
   }
 
   addWeapon(id: string): boolean {
@@ -112,10 +116,15 @@ export class WeaponSystem {
 
     this.updateOrbit(dt, player, enemies);
     this.updateBullets(dt, enemies, player);
+    this.damageText.update(dt);
   }
 
   private fire(w: OwnedWeapon, player: Player, target: Enemy): void {
     const s = w.stats;
+    // 开火后坐反馈：接玩家程序化动画（每次齐射一次）；
+    // 震动只给 12ms 的轻触感，持续射击下不会糊（受持久开关控制）
+    player.onFire();
+    vibrate(12);
     // 重武器用更沉的音色，普通枪轻快
     if (w.def.id === 'sniper' || w.def.id === 'railgun' || w.def.id === 'fatfishCannon') sfx.sniper();
     else sfx.shoot();
@@ -229,7 +238,10 @@ export class WeaponSystem {
 
   private applyDamage(e: Enemy, base: number, enemies: EnemySystem, player: Player): void {
     let dmg = base;
-    if (Math.random() < player.stats.critChance) dmg *= player.stats.critMult;
+    const crit = Math.random() < player.stats.critChance;
+    if (crit) dmg *= player.stats.critMult;
+    // 浮动伤害数字：命中/暴击反馈的核心一环
+    this.damageText.show(e.x, e.y, dmg, { crit });
     enemies.damage(e, dmg);
   }
 

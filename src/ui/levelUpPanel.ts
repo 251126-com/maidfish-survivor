@@ -88,6 +88,14 @@ export class LevelUpPanel {
     this.setVisible(false);
   }
 
+  private setCardAlpha(c: CardView, a: number): void {
+    c.bg.setAlpha(a);
+    c.border.setAlpha(a);
+    c.kind.setAlpha(a);
+    c.name.setAlpha(a);
+    c.desc.setAlpha(a);
+  }
+
   private setVisible(v: boolean): void {
     this.overlay.setVisible(v);
     this.title.setVisible(v);
@@ -123,12 +131,28 @@ export class LevelUpPanel {
       if (!c) continue;
       c.bg.setVisible(true); c.kind.setVisible(true);
       c.name.setVisible(true); c.desc.setVisible(true);
+      // 卡片淡入 + 轻微上浮，升级选择更有"奖励感"
+      this.setCardAlpha(c, 0);
+      const y0 = c.bg.y;
+      c.bg.y = y0 + 24; c.border.y = y0 + 24; c.kind.y = y0 + 24;
+      c.name.y = y0 + 24; c.desc.y = y0 + 24;
+      this.scene.tweens.add({
+        targets: [c.bg, c.border, c.kind, c.name, c.desc],
+        alpha: 1,
+        y: y0,
+        duration: 260,
+        ease: 'Cubic.easeOut',
+        delay: i * 70
+      });
     }
     this.visible = true;
   }
 
   hide(): void {
     this.onPick = null;
+    // 结束可能还在播放的淡入动画，恢复完整透明度供下次使用
+    this.scene.tweens.killTweensOf(this.cards.map(c => [c.bg, c.border, c.kind, c.name, c.desc]).flat());
+    for (const c of this.cards) this.setCardAlpha(c, 1);
     this.setVisible(false);
   }
 

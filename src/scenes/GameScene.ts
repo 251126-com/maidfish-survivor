@@ -8,12 +8,14 @@ import { currentPhase, pickEnemy } from '../config/timeline.ts';
 import { BUFF_POOL, PASSIVES, type PlayerStats } from '../config/upgrades.ts';
 import { loadSave, writeSave, metaBonus } from '../core/save.ts';
 import { sfx } from '../core/audio.ts';
+import { vibrate } from '../core/vibration.ts';
 import { Player } from '../game/player.ts';
 import { EnemySystem, type Enemy } from '../game/enemySystem.ts';
 import { WeaponSystem } from '../game/weaponSystem.ts';
 import { DropSystem } from '../game/dropSystem.ts';
 import { InputSystem } from '../game/inputSystem.ts';
 import { LevelSystem, rollUpgradeOptions, type UpgradeOption } from '../game/levelUp.ts';
+import { shakeForEvent } from '../game/feel.ts';
 import { Hud } from '../ui/hud.ts';
 import { LevelUpPanel } from '../ui/levelUpPanel.ts';
 
@@ -33,6 +35,9 @@ export class GameScene extends Phaser.Scene {
   private inputSys!: InputSystem;
   private hud!: Hud;
   private panel!: LevelUpPanel;
+  private hurtFlash!: Phaser.GameObjects.Rectangle;
+  private touchHint: Phaser.GameObjects.Text | null = null;
+  private touchHintDone = false;
   private levelSys!: LevelSystem;
   private bg!: Phaser.GameObjects.TileSprite;
 
@@ -44,6 +49,9 @@ export class GameScene extends Phaser.Scene {
   private spawnTimer = 0;
   private bossSpawned = false;
   private isOver = false;
+  private paused = false;
+  private pauseOverlay: Phaser.GameObjects.Rectangle | null = null;
+  private pauseLabel: Phaser.GameObjects.Text | null = null;
 
   constructor() { super('Game'); }
 
@@ -54,6 +62,7 @@ export class GameScene extends Phaser.Scene {
     this.spawnTimer = 0;
     this.bossSpawned = false;
     this.isOver = false;
+    this.touchHintDone = false;
     this.levelSys = new LevelSystem();
     this.passives = {};
 
@@ -115,16 +124,45 @@ export class GameScene extends Phaser.Scene {
     this.hud = new Hud(this);
     this.panel = new LevelUpPanel(this);
 
+    // 暂停/恢复：HUD 按钮 + 键盘（P / Esc）
+    this.paused = false;
+    this.hud.onPauseToggle = () => this.togglePause();
+    const kb = this.input.keyboard;
+    if (kb) {
+      kb.on('keydown-P', () => this.togglePause());
+      kb.on('keydown-ESC', () => this.togglePause());
+    }
+
+    // 受击红晕：屏幕边缘闪一下，配合音效/震动给伤害反馈
+    this.hurtFlash = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0xff2233, 0)
+      .setDepth(160).setScrollFactor(0);
+
+    // 暂停遮罩：覆盖世界并提示点击继续（只在暂停时显示）
+    this.pauseOverlay = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x060b14, 0.66)
+      .setDepth(170).setScrollFactor(0).setVisible(false).setInteractive();
+    this.pauseLabel = this.add.text(GAME_W / 2, GAME_H / 2, '已暂停\n点击屏幕任意位置继续', {
+      fontFamily: 'monospace', fontSize: '34px', color: '#e8f4ff', align: 'center', lineSpacing: 14
+    }).setOrigin(0.5).setDepth(171).setScrollFactor(0).setVisible(false);
+    this.pauseOverlay.on('pointerdown', () => this.togglePause());
+
     // 场景退出时解绑输入监听，避免重复绑定
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.inputSys.destroy();
       this.hud.destroy();
       this.panel.destroy();
+      this.hurtFlash.destroy();
+      this.pauseOverlay?.destroy();
+      this.pauseLabel?.destroy();
+      this.touchHint?.destroy();
+      this.touchHint = null;
+      this.touchHintDone = true;
     });
+
+    this.showTouchHint();
   }
 
   update(_time: number, delta: number): void {
-    if (this.isOver) return;
+    if (this.isOver || this.paused) return;
     if (this.panel.visible) return;   // 升级面板打开时暂停世界
 
     // 帧率无关：单帧最大 50ms，防止切后台回来瞬移
@@ -157,12 +195,24 @@ export class GameScene extends Phaser.Scene {
     this.checkEnd();
   }
 
+  // 暂停/恢复：切状态、显示遮罩、清摇杆、更新按钮文案
+  private togglePause(): void {
+    this.paused = !this.paused;
+    this.hud.setPauseLabel(this.paused);
+    this.pauseOverlay?.setVisible(this.paused);
+    this.pauseLabel?.setVisible(this.paused);
+    if (this.paused) this.inputSys.reset();   // 暂停时清掉摇杆，避免恢复时残留
+  }
+
   private updateSpawner(dt: number): void {
     // Boss 到点登场（只一次）
     if (!this.bossSpawned && this.elapsed >= BOSS_TIME) {
       this.bossSpawned = true;
       this.spawnEnemy('boss');
       sfx.boss();
+      vibrate([90, 60, 90]);
+      const s = shakeForEvent('boss');
+      this.cameras.main.shake(s.duration, s.intensity);
     }
 
     const phase = currentPhase(this.elapsed);
@@ -196,7 +246,14 @@ export class GameScene extends Phaser.Scene {
       const dx = e.x - this.player.x;
       const dy = e.y - this.player.y;
       if (dx * dx + dy * dy <= rr * rr) {
-        if (this.player.takeDamage(e.damage)) sfx.hurt();   // 无敌帧在 Player 内部处理
+        // 无敌帧在 Player 内部处理；只有"真的受伤"才需要视觉反馈
+        if (this.player.takeDamage(e.damage, e.x, e.y)) {   // 传入命中来源：触发受击后仰/闪红
+          sfx.hurt();
+          vibrate([70, 40, 70]);
+          const s = shakeForEvent('hurt');
+          this.cameras.main.shake(s.duration, s.intensity);
+          this.flashHurt();
+        }
       }
     }
   }
@@ -204,9 +261,42 @@ export class GameScene extends Phaser.Scene {
   private onEnemyKilled(e: Enemy): void {
     this.kills++;
     sfx.kill();
+    vibrate(25);
     this.drops.spawn(e.x, e.y, 'xp', e.xp);
     if (Math.random() < e.goldChance) this.drops.spawn(e.x, e.y, 'gold', 1);
     if (e.isBoss) this.finish(true);
+  }
+
+  private flashHurt(): void {
+    if (this.hurtFlash.alpha >= 0.25) return;   // 连续受击时不要叠太厚
+    this.hurtFlash.setAlpha(0.28);
+    this.tweens.add({
+      targets: this.hurtFlash,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => this.hurtFlash.setAlpha(0)
+    });
+  }
+
+  // 首局触控提示：明确告知"按住屏幕任意位置拖动移动"；首次触摸或 5 秒后淡出
+  private showTouchHint(): void {
+    if (this.touchHintDone) return;
+    this.touchHint = this.add.text(GAME_W / 2, GAME_H - 66, '按住屏幕任意位置拖动移动 · 自动攻击', {
+      fontFamily: 'monospace', fontSize: '18px', color: '#cfeeff'
+    }).setOrigin(0.5).setDepth(95).setScrollFactor(0).setAlpha(0.9);
+    const dismiss = () => {
+      if (this.touchHintDone) return;
+      this.touchHintDone = true;
+      this.input.off('pointerdown', dismiss);
+      const h = this.touchHint;
+      if (h) this.tweens.add({
+        targets: h, alpha: 0, duration: 400,
+        onComplete: () => h.destroy()
+      });
+      this.touchHint = null;
+    };
+    this.input.on('pointerdown', dismiss);
+    this.time.delayedCall(5000, dismiss);
   }
 
   private checkLevelUp(): void {
@@ -214,6 +304,8 @@ export class GameScene extends Phaser.Scene {
     const owned = this.weapons.owned.map(w => ({ id: w.def.id, level: w.level, maxed: w.maxed }));
     const opts = rollUpgradeOptions(owned, this.passives);
     sfx.levelUp();
+    vibrate([30, 50, 30]);
+    this.inputSys.reset();   // 面板盖住世界：清掉残留的摇杆绘制
     this.panel.show(opts, (idx) => this.applyUpgrade(opts[idx]));
   }
 
@@ -268,10 +360,13 @@ export class GameScene extends Phaser.Scene {
       hp: this.stats.hp,
       maxHp: this.stats.maxHp,
       xpRatio: this.levelSys.ratio,
+      xpCur: this.levelSys.xp,
+      xpNeed: this.levelSys.need,
       level: this.levelSys.level,
       kills: this.kills,
       gold: this.gold,
       elapsed: this.elapsed,
+      weapons: this.weapons.owned.map(w => ({ name: w.def.name, level: w.level, maxed: w.maxed })),
       bossHp, bossMaxHp, bossName
     });
   }

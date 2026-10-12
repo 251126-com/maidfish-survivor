@@ -3,6 +3,7 @@ import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../config/balance.ts';
 import { META_TREE } from '../config/upgrades.ts';
 import { loadSave, writeSave } from '../core/save.ts';
+import { VERSION } from '../config/version.ts';
 
 export class MenuScene extends Phaser.Scene {
   private goldText!: Phaser.GameObjects.Text;
@@ -51,7 +52,7 @@ export class MenuScene extends Phaser.Scene {
 
     this.buildShop(save.gold);
 
-    this.add.text(GAME_W / 2, GAME_H - 26, '触摸拖动 / WASD 移动 · 自动开火', {
+    this.add.text(GAME_W / 2, GAME_H - 26, `触摸拖动 / WASD 移动 · 自动开火 · v${VERSION}`, {
       fontFamily: 'monospace', fontSize: '13px', color: '#54708c'
     }).setOrigin(0.5);
   }
