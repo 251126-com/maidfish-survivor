@@ -3,11 +3,22 @@
 
 type Wave = OscillatorType;
 
+// 音效开关持久化（与震动开关一致：单独存 localStorage，不进主存档）
+const SFX_KEY = 'maidfish-survivor-sfx-v1';
+
+function loadSfxEnabled(): boolean {
+  try {
+    return localStorage.getItem(SFX_KEY) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
 export class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private lastAt: Record<string, number> = {};
-  enabled = true;
+  enabled = loadSfxEnabled();
   volume = 0.35;
 
   // 必须在用户手势里调用一次（浏览器自动播放策略）
@@ -31,6 +42,11 @@ export class Sfx {
   setEnabled(v: boolean): void {
     this.enabled = v;
     if (this.master) this.master.gain.value = v ? this.volume : 0;
+    try {
+      localStorage.setItem(SFX_KEY, v ? 'on' : 'off');
+    } catch {
+      /* 存储不可用时静默 */
+    }
   }
 
   private ready(): boolean {

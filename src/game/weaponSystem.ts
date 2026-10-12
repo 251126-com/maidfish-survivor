@@ -110,17 +110,23 @@ export class WeaponSystem {
       if (w.cd > 0) continue;
       const target = this.findNearest(player.x, player.y, w.stats.range, enemies);
       if (!target) continue;
-      w.cd = w.stats.cooldown;
-      this.fire(w, player, target);
+      // 只有整轮齐射成功才进入冷却；容量不足时下帧重试，避免半发齐射吞冷却
+      if (this.fire(w, player, target)) w.cd = w.stats.cooldown;
     }
 
     this.updateOrbit(dt, player, enemies);
     this.updateBullets(dt, enemies, player);
+    // 关键：每帧 compact 子弹池。
+    // 缺陷回归（v0.4.0）：release 只打标记，若从不 compact，live 表会被死子弹占满，
+    // 达到 POOL_LIMIT 后 acquire 永远返回 null，长战斗后永久停火且 live 表内存只增不减。
+    this.bulletPool.compact();
     this.damageText.update(dt);
   }
 
-  private fire(w: OwnedWeapon, player: Player, target: Enemy): void {
+  private fire(w: OwnedWeapon, player: Player, target: Enemy): boolean {
     const s = w.stats;
+    // 容量预检：整轮齐射要能一次拿齐，否则不出手（保帧率、防半发齐射）
+    if (this.bulletPool.live.length + s.count > POOL_LIMIT.bullet) return false;
     // 开火后坐反馈：接玩家程序化动画（每次齐射一次）；
     // 震动只给 12ms 的轻触感，持续射击下不会糊（受持久开关控制）
     player.onFire();
@@ -134,7 +140,7 @@ export class WeaponSystem {
       const offset = s.count > 1 ? (i - (s.count - 1) / 2) * spread : 0;
       const a = baseAngle + offset;
       const b = this.bulletPool.acquire();
-      if (!b) return;
+      if (!b) return false;
       b.x = player.x;
       b.y = player.y;
       b.vx = Math.cos(a) * s.speed;
@@ -149,6 +155,7 @@ export class WeaponSystem {
       b.sprite.setRotation(a);
       b.sprite.setVisible(true);
     }
+    return true;
   }
 
   private updateBullets(dt: number, enemies: EnemySystem, player: Player): void {

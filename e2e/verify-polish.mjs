@@ -1,4 +1,4 @@
-// v0.4.0 打磨项端到端验证：浮动伤害数字、音效开关、UI点击不触发摇杆、版本标记、竖屏提示
+// v0.5.0 打磨项端到端验证：浮动伤害数字、音效开关、UI点击不触发摇杆、版本标记、竖屏提示
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 
@@ -24,7 +24,7 @@ await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 const ver = await page.evaluate(() => window.__VERSION ?? null);
 console.log('   版本标记:', ver);
-const verOk = ver === '0.4.0';
+const verOk = ver === '0.5.0';
 
 // ---------- 2. 进入游戏 ----------
 await page.mouse.click(640, 230);
@@ -117,7 +117,7 @@ await p2.close();
 await p3.close();
 
 const checks = [
-  ['版本标记 window.__VERSION === 0.4.0', verOk],
+  ['版本标记 window.__VERSION === 0.5.0', verOk],
   ['浮动伤害数字出现（普通+暴击）', dmgOk],
   ['音效开关点击后关闭', soundOk],
   ['再次点击恢复开启', soundRestoreOk],
@@ -125,7 +125,7 @@ const checks = [
   ['竖屏显示横屏提示 / 横屏隐藏', portraitOk],
   ['无 JS 运行时错误', errors.length === 0]
 ];
-console.log('\n===== v0.4.0 打磨项验证 =====');
+console.log('\n===== v0.5.0 打磨项验证 =====');
 let allPass = true;
 for (const [name, ok] of checks) {
   console.log(`${ok ? '✔' : '✘'} ${name}`);

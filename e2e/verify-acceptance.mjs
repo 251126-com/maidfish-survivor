@@ -1,4 +1,4 @@
-// v0.4.0 验收：真实游戏内角色动作 + 完整 HUD + 流程（桌面/手机双视口）
+// v0.5.0 验收：真实游戏内角色动作 + 完整 HUD + 流程（桌面/手机双视口）
 // 截图全部来自运行中的真实游戏画面（player_whale.png + 程序化动画），不是原图/概念图。
 // 用法：CHROME_PATH=/usr/bin/chromium E2E_URL=http://127.0.0.1:4173/ node e2e/verify-acceptance.mjs
 import { chromium } from 'playwright';
@@ -27,7 +27,7 @@ await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 
 const ver = await page.evaluate(() => window.__VERSION ?? null);
-check('版本标记 __VERSION=0.4.0', ver === '0.4.0', `实际 ${ver}`);
+check('版本标记 __VERSION=0.5.0', ver === '0.5.0', `实际 ${ver}`);
 log('  版本标记:', ver);
 
 // 进入游戏
@@ -340,7 +340,7 @@ mp.on('pageerror', e => errors.push(`[mobile pageerror] ${e.message}`));
 await mp.goto(URL, { waitUntil: 'load' });
 await mp.waitForTimeout(1400);
 const mVer = await mp.evaluate(() => window.__VERSION ?? null);
-check('手机端版本标记 0.4.0', mVer === '0.4.0', `实际 ${mVer}`);
+check('手机端版本标记 0.5.0', mVer === '0.5.0', `实际 ${mVer}`);
 const map = async (lx, ly) => {
   const box = await mp.locator('canvas').first().boundingBox();
   return { x: box.x + (lx / 1280) * box.width, y: box.y + (ly / 720) * box.height };
@@ -392,7 +392,7 @@ await mp.close();
 
 // ---------- 汇总 ----------
 check('无页面/控制台错误', errors.length === 0, errors.join('; ').slice(0, 300));
-console.log('\n===== v0.4.0 验收结果 =====');
+console.log('\n===== v0.5.0 验收结果 =====');
 let fail = 0;
 for (const [name, ok, detail] of results) {
   console.log(`  ${ok ? '✅' : '❌'} ${name}${detail ? `  (${detail})` : ''}`);

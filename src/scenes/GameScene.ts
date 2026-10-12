@@ -18,6 +18,7 @@ import { LevelSystem, rollUpgradeOptions, type UpgradeOption } from '../game/lev
 import { shakeForEvent } from '../game/feel.ts';
 import { Hud } from '../ui/hud.ts';
 import { LevelUpPanel } from '../ui/levelUpPanel.ts';
+import { FloatingMenu } from '../ui/floatingMenu.ts';
 
 export interface ResultData {
   win: boolean;
@@ -35,6 +36,7 @@ export class GameScene extends Phaser.Scene {
   private inputSys!: InputSystem;
   private hud!: Hud;
   private panel!: LevelUpPanel;
+  private floatMenu!: FloatingMenu;
   private hurtFlash!: Phaser.GameObjects.Rectangle;
   private touchHint: Phaser.GameObjects.Text | null = null;
   private touchHintDone = false;
@@ -123,14 +125,24 @@ export class GameScene extends Phaser.Scene {
     this.inputSys = new InputSystem(this);
     this.hud = new Hud(this);
     this.panel = new LevelUpPanel(this);
+    // 悬浮菜单（可拖拽悬浮球 + 全屏面板）：继续/暂停、音效、震动、重开、返回菜单
+    this.floatMenu = new FloatingMenu(this, {
+      getPaused: () => this.paused,
+      setPaused: (v: boolean, showOverlay = true) => this.setPaused(v, showOverlay),
+      restart: () => this.scene.start('Game'),
+      toMenu: () => this.scene.start('Menu')
+    });
 
-    // 暂停/恢复：HUD 按钮 + 键盘（P / Esc）
+    // 暂停/恢复：HUD 按钮 + 键盘（P / Esc）。悬浮面板打开期间由面板自身接管暂停，避免抢切
     this.paused = false;
-    this.hud.onPauseToggle = () => this.togglePause();
+    this.hud.onPauseToggle = () => {
+      if (this.floatMenu.isOpen) return;
+      this.togglePause();
+    };
     const kb = this.input.keyboard;
     if (kb) {
-      kb.on('keydown-P', () => this.togglePause());
-      kb.on('keydown-ESC', () => this.togglePause());
+      kb.on('keydown-P', () => { if (this.floatMenu.isOpen) return; this.togglePause(); });
+      kb.on('keydown-ESC', () => { if (this.floatMenu.isOpen) return; this.togglePause(); });
     }
 
     // 受击红晕：屏幕边缘闪一下，配合音效/震动给伤害反馈
@@ -150,6 +162,7 @@ export class GameScene extends Phaser.Scene {
       this.inputSys.destroy();
       this.hud.destroy();
       this.panel.destroy();
+      this.floatMenu.destroy();
       this.hurtFlash.destroy();
       this.pauseOverlay?.destroy();
       this.pauseLabel?.destroy();
@@ -197,10 +210,15 @@ export class GameScene extends Phaser.Scene {
 
   // 暂停/恢复：切状态、显示遮罩、清摇杆、更新按钮文案
   private togglePause(): void {
-    this.paused = !this.paused;
+    this.setPaused(!this.paused);
+  }
+
+  // showOverlay=false：由悬浮面板当暂停 UI 时使用，不显示"点击继续"遮罩，避免两个全屏遮罩抢事件
+  private setPaused(v: boolean, showOverlay = true): void {
+    this.paused = v;
     this.hud.setPauseLabel(this.paused);
-    this.pauseOverlay?.setVisible(this.paused);
-    this.pauseLabel?.setVisible(this.paused);
+    this.pauseOverlay?.setVisible(this.paused && showOverlay);
+    this.pauseLabel?.setVisible(this.paused && showOverlay);
     if (this.paused) this.inputSys.reset();   // 暂停时清掉摇杆，避免恢复时残留
   }
 
