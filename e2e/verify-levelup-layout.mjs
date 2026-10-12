@@ -41,6 +41,23 @@ const geoms = (page) => page.evaluate(() => {
   return { visible: p.visible, cards: g };
 });
 
+// 轮询等待卡片 tween 完成（比固定 sleep 抗负载抖动）：各对象停在基准 y 即视为稳定
+async function waitSettled(page, timeoutMs = 6000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const info = await geoms(page);
+    const settled = info.cards.length > 0 && info.cards.every((c) => {
+      return Math.abs(c.actual.kind - c.expect.kindY) < 0.05 &&
+             Math.abs(c.actual.name - c.expect.nameY) < 0.05 &&
+             Math.abs(c.actual.desc - c.expect.descY) < 0.05 &&
+             Math.abs(c.card.cy - c.expect.cy) < 0.05;
+    });
+    if (settled) return { ok: true, info };
+    if (Date.now() > deadline) return { ok: false, info };
+    await page.waitForTimeout(200);
+  }
+}
+
 
 // 注入"长中文"升级选项：覆盖用户截图场景（真实滚到的短文案外，还要保证长文案不叠印/不越界）
 const LONG_OPTS = [
@@ -54,8 +71,8 @@ async function injectLongCn(page, label) {
     const s = window.__game.scene.getScene('Game');
     s.panel.show(opts, () => {});
   }, LONG_OPTS.map(o => ({ ...o })));
-  await page.waitForTimeout(700);
-  const info = await geoms(page);
+  const settled = await waitSettled(page);
+  const info = settled.info;
   const ok = info.cards.length === 3 && info.cards.every((c) => {
     const top = c.card.cy - c.card.h / 2;
     const bottom = c.card.cy + c.card.h / 2;
@@ -73,7 +90,7 @@ async function injectLongCn(page, label) {
     return kindsOk && namesOk && descsOk && zonesOk && orderOk;
   });
   await page.screenshot({ path: `${OUT}/${label}-longcn.png` });
-  return ok;
+  return { ok, info };
 }
 
 async function runViewport(ctx, vp, label) {
@@ -98,9 +115,9 @@ async function runViewport(ctx, vp, label) {
     s.levelSys.addXp(s.levelSys.need, 1);
     s.checkLevelUp();
   });
-  await page.waitForTimeout(700);   // 等 260ms tween + 延迟完成
-
-  const info = await geoms(page);
+  const settled = await waitSettled(page);
+  if (!settled.ok) console.log(`  [${label}] tween 未在预期内稳定，继续截图诊断`);
+  const info = settled.info;
   check(`${label}: 升级面板已打开`, info.visible === true);
   check(`${label}: 卡片与文字均未叠印（kind/name/desc 不同 y 且间距足够）`,
     info.cards.every(c =>
@@ -161,9 +178,9 @@ async function runViewport(ctx, vp, label) {
   check(`${label}: 点选中间卡后面板关闭（点击区域有效）`, after === false);
 
   // 长中文注入验收（同一视口：真实滚动选项 + 长中文极值）
-  const longOk = await injectLongCn(page, label);
-  check(`${label}: 长中文 kind/name/desc 各归其位、不越界不交叠（含缩字）`, longOk,
-    info.cards.map(c => `nameH=${c.actual.nameH.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)} descH=${c.actual.descH.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}`).join(' | '));
+  const longOut = await injectLongCn(page, label);
+  check(`${label}: 长中文 kind/name/desc 各归其位、不越界不交叠（含缩字）`, longOut.ok,
+    longOut.info.cards.map(c => `k=${c.actual.kind.toFixed(0)}/${c.expect.kindY.toFixed(0)} n=${c.actual.name.toFixed(0)}/${c.expect.nameY.toFixed(0)} d=${c.actual.desc.toFixed(0)}/${c.expect.descY.toFixed(0)} nameH=${c.actual.nameH.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)} descH=${c.actual.descH.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}`).join(' | '));
   await page.evaluate(() => { const s = window.__game.scene.getScene('Game'); s.panel.hide(); });
   await page.waitForTimeout(300);
   await page.close();
