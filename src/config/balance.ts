@@ -40,7 +40,7 @@ export const POOL_LIMIT = {
   gem: 200,
   damageText: 40,
   enemyBullet: 120,   // v0.9.0 Boss 弹幕（扇弹）池
-  deathFx: 160        // v0.10.0 击杀爆散粒子池（克制数量，复用不新建）
+  deathFx: 150        // v0.12.0 击杀爆散粒子池（v0.10.0 原160 → v0.12.0 收紧到 150，同屏粒子≤150 的性能承诺）
 };
 
 // 敌人属性随时间成长：每分钟 +35% 生命，+3% 移速（封顶）
@@ -60,3 +60,11 @@ export const ARMOR_MAX = 30;              // 饭盆护甲上限/耐久
 // v0.10.0 开局护盾：新对局自带 20 点护甲（半份饭盆）。
 // 前 60s 容错——30s 前后不再一被围就快速掉光 HP；拾取饭盆仍可补满到 ARMOR_MAX。
 export const STARTER_ARMOR = 20;
+
+// ---- v0.12.0 精英怪（水母/灯笼鱼）节奏 ----
+export const ELITE_START_SEC = 40;      // 40s 后才开始刷精英（开局容错不受冲击）
+export const ELITE_SPAWN_INTERVAL = 16; // 精英刷出间隔（秒，带随机抖动）
+export const ELITE_MAX_ALIVE = 2;       // 同屏精英上限（每波1-2只）
+export const ELITE_HP_BONUS = 0.8;      // 精英血量在 hpScale 之上再加 80%（单挑节奏）
+// 超屏敌人回收距离（px）：离玩家超过该距离立即回收，防止被甩在身后的敌人积累拖帧
+export const RECYCLE_DIST = 1500;

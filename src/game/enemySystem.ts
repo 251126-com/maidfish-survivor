@@ -1,11 +1,15 @@
 // 敌人系统：池化敌人 + 追踪玩家 + 分离力（防止叠成一坨）+ 受击闪白 + 轻击退
 // v0.10.0：命中后沿弹道方向给一段指数衰减的击退位移（Boss 免疫击退），
 // 受击闪白从 0.08s 提到 0.11s，让"打中"更有存在感，但震屏仍只留给大事件。
+// v0.12.0：
+//  - 精英（水母/灯笼鱼）：体型放大、发光边框由 GameScene 画、带状态效果；独立低频刷出
+//  - 状态效果：燃烧 DoT / 冰冻减速（由武器质变施加，本系统负责结算与显示）
+//  - 性能：离玩家超过 RECYCLE_DIST 的敌人立即回收（Boss 除外）
 import Phaser from 'phaser';
 import { EntityPool, type Poolable } from '../core/pool.ts';
 import { SpatialHash } from '../core/spatialHash.ts';
 import { ENEMIES, type EnemyDef } from '../config/enemies.ts';
-import { WORLD_W, WORLD_H, POOL_LIMIT, hpScale, speedScale } from '../config/balance.ts';
+import { WORLD_W, WORLD_H, POOL_LIMIT, hpScale, speedScale, RECYCLE_DIST } from '../config/balance.ts';
 
 export class Enemy implements Poolable {
   // 唯一自增 id：子弹穿透时用它判重，避免重复扣血
@@ -23,6 +27,7 @@ export class Enemy implements Poolable {
   xp = 0;
   goldChance = 0;
   isBoss = false;
+  isElite = false;      // v0.12.0 精英标记（水母/灯笼鱼）
   orbitCd = 0;        // 环绕武器对该敌人的独立命中冷却
   // v0.10.0 击退位移（px/s 级初速，指数衰减到 0）
   knockX = 0;
@@ -30,6 +35,12 @@ export class Enemy implements Poolable {
   def!: EnemyDef;
   sprite!: Phaser.GameObjects.Image;
   flash = 0;
+  // v0.12.0 状态效果（武器质变施加）
+  burnT = 0;
+  burnDps = 0;
+  burnAcc = 0;
+  slowFactor = 0;
+  slowT = 0;
   // v0.11.0 特殊敌人行为状态（spawn 时由 EnemySystem 按 def 初始化）
   move: 'chase' | 'float' | 'dash' = 'chase';
   auraT = 0;            // 水母：距下次麻痹圈开始的倒计时
@@ -46,6 +57,8 @@ export class Enemy implements Poolable {
     this.flash = 0; this.orbitCd = 0; this.knockX = 0; this.knockY = 0;
     this.auraState = 0; this.auraRemain = 0; this.auraResolve = false;
     this.dashTimer = 0; this.dashVX = 0; this.dashVY = 0; this.dashActive = false;
+    this.burnT = 0; this.burnDps = 0; this.burnAcc = 0;
+    this.slowFactor = 0; this.slowT = 0;
   }
   despawn(): void { this.sprite.setVisible(false); }
 }
@@ -79,8 +92,9 @@ export class EnemySystem {
     e.def = def;
     e.x = x;
     e.y = y;
-    // v0.10.0: Boss 血量固定不随 elapsed 膨胀（Boss 是节奏事件，普通敌人仍按时间成长）
-    e.maxHp = e.isBoss ? def.hp : def.hp * hpScale(elapsed);
+    // v0.12.0: 精英在 hpScale 之上再加 ELITE_HP_BONUS 血量（更耐打、单挑节奏）
+    e.isElite = !!def.elite;
+    e.maxHp = e.isBoss ? def.hp : def.hp * hpScale(elapsed) * (e.isElite ? 1.8 : 1);
     e.hp = e.maxHp;
     e.speed = def.speed * speedScale(elapsed);
     e.damage = def.damage;
@@ -95,14 +109,16 @@ export class EnemySystem {
     e.dashT = def.dash ? def.dash.cd * (0.5 + Math.random() * 0.5) : 0;
 
     e.sprite.setTexture(def.texture);
-    e.sprite.setScale(def.scale);
+    // v0.12.0 精英体型放大（默认 1.6 倍）
+    const scale = e.isElite ? (def.eliteScale ?? 1.6) : def.scale;
+    e.sprite.setScale(scale);
     e.sprite.setPosition(x, y);
     e.sprite.setVisible(true);
     e.sprite.clearTint();
     return e;
   }
 
-  // 每帧：重建空间哈希 → 追踪 + 分离 + 击退衰减
+  // 每帧：重建空间哈希 → 追踪 + 分离 + 击退衰减 + 状态效果结算 + 超屏回收
   update(dt: number, px: number, py: number): void {
     const live = this.pool.live;
 
@@ -114,6 +130,13 @@ export class EnemySystem {
 
     for (let i = 0; i < live.length; i++) {
       const e = live[i];
+
+      // v0.12.0 超屏立即回收：离玩家太远（被甩在身后）的敌人不浪费更新/碰撞
+      // 阈值 1500 大于刷怪环 760~1040，正常刷出的敌人不会被误回收
+      if (!e.isBoss) {
+        const distP = Math.hypot(px - e.x, py - e.y);
+        if (distP > RECYCLE_DIST) { this.pool.release(e); continue; }
+      }
 
       // 朝玩家方向单位向量（水母/灯笼鱼在其非特殊阶段也复用）
       const dx = px - e.x;
@@ -143,13 +166,16 @@ export class EnemySystem {
       my += sy * this.separationWeight;
       const ml = Math.hypot(mx, my) || 1;
 
+      // v0.12.0 冰冻减速：状态生效期间速度按 slowFactor 缩减
+      const spdMul = e.slowT > 0 ? (1 - e.slowFactor) : 1;
+
       // v0.11.0 移动模式：chase 直线追踪 / float 漂浮+蓄圈站定 / dash 慢速逼近+周期冲刺
       let mvx = 0, mvy = 0;
       if (e.move === 'float') {
         // 水母：蓄圈预警时站定不动，其余时间以基准速度漂浮逼近
         if (e.auraState !== 1) {
-          mvx = (mx / ml) * e.speed * dt;
-          mvy = (my / ml) * e.speed * dt;
+          mvx = (mx / ml) * e.speed * spdMul * dt;
+          mvy = (my / ml) * e.speed * spdMul * dt;
         }
       } else if (e.move === 'dash') {
         // 灯笼鱼：冲刺中沿固定方向高速直线；否则慢速追踪
@@ -172,13 +198,13 @@ export class EnemySystem {
             e.dashActive = true;
             e.dashTimer = e.def.dash?.dur ?? 0.55;
           } else {
-            mvx = (mx / ml) * e.speed * dt;
-            mvy = (my / ml) * e.speed * dt;
+            mvx = (mx / ml) * e.speed * spdMul * dt;
+            mvy = (my / ml) * e.speed * spdMul * dt;
           }
         }
       } else {
-        mvx = (mx / ml) * e.speed * dt;
-        mvy = (my / ml) * e.speed * dt;
+        mvx = (mx / ml) * e.speed * spdMul * dt;
+        mvy = (my / ml) * e.speed * spdMul * dt;
       }
       e.x += mvx;
       e.y += mvy;
@@ -201,6 +227,17 @@ export class EnemySystem {
         }
       }
 
+      // v0.12.0 燃烧 DoT：累积伤害到整数才结算一次（避免每帧浮点损伤与刷白）
+      if (e.burnT > 0) {
+        e.burnT -= dt;
+        e.burnAcc += e.burnDps * dt;
+        while (e.burnAcc >= 1) {
+          e.burnAcc -= 1;
+          if (this.damage(e, 1, false)) break;   // 静默伤害：不闪白不打断
+        }
+      }
+      if (e.slowT > 0) e.slowT -= dt;
+
       // v0.10.0 击退：独立于追踪，指数衰减（时间常数 ~0.35s），Boss 不受击退
       if (e.knockX !== 0 || e.knockY !== 0) {
         const kf = Math.exp(-6.5 * dt);
@@ -221,6 +258,9 @@ export class EnemySystem {
       if (e.flash > 0) {
         e.flash -= dt;
         if (e.flash <= 0) e.sprite.clearTint();
+      } else if (e.burnT > 0) {
+        // v0.12.0 燃烧显示：橙红持续 tint（受击闪白优先，结束后恢复）
+        e.sprite.setTint(0xff8a4d);
       }
     }
   }
@@ -234,10 +274,13 @@ export class EnemySystem {
   }
 
   // 造成伤害；返回是否击杀
-  damage(e: Enemy, amount: number): boolean {
+  // v0.12.0 visual=false 用于燃烧 DoT 等持续伤害（不闪白、不打断）
+  damage(e: Enemy, amount: number, visual = true): boolean {
     e.hp -= amount;
-    e.flash = 0.11;   // v0.10.0: 闪白稍长，命中感更清晰
-    e.sprite.setTint(0xffffff);
+    if (visual) {
+      e.flash = 0.11;   // v0.10.0: 闪白稍长，命中感更清晰
+      e.sprite.setTint(0xffffff);
+    }
     if (e.hp <= 0) {
       if (this.onKill) this.onKill(e);
       this.pool.release(e);

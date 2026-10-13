@@ -23,14 +23,16 @@ const KIND_LABEL: Record<string, string> = {
   weapon_level: '武器强化',
   buff: '属性提升',
   passive: '被动道具',
-  evolution: '★ 进 化 ★'
+  evolution: '★ 进 化 ★',
+  mutation: '◆ 质 变 ◆'
 };
 const KIND_COLOR: Record<string, number> = {
   new_weapon: 0x3a7bd5,
   weapon_level: 0x2f9e77,
   buff: 0xb0762f,
   passive: 0x7a5cc4,
-  evolution: 0xffb020      // 进化用金边，一眼能认出来
+  evolution: 0xffb020,     // 进化用金边，一眼能认出来
+  mutation: 0xffd700        // v0.12.0 质变用亮金边框，比进化更跳
 };
 
 // 名称/描述的起始字号；硬最小字号用于病态超长文本截断（跌破首选字号仍放不下时）
@@ -45,6 +47,7 @@ interface CardView {
   name: Phaser.GameObjects.Text;
   desc: Phaser.GameObjects.Text;
   base: CardBox;
+  kindColor: number;   // v0.13.0 修复：pointerout 恢复各自 kind 色，进化/质变金边不丢
 }
 
 export class LevelUpPanel {
@@ -100,13 +103,14 @@ export class LevelUpPanel {
         align: 'center', wordWrap: { width: z.descMaxW }
       }).setOrigin(0.5).setDepth(202).setScrollFactor(0);
 
+      const cardView: CardView = { bg, border, kind, name, desc, base: c, kindColor: 0x3d6c9e };
       bg.on('pointerover', () => bg.setStrokeStyle(3, 0x7fd4ff));
-      bg.on('pointerout', () => bg.setStrokeStyle(3, 0x3d6c9e));
+      bg.on('pointerout', () => bg.setStrokeStyle(3, cardView.kindColor));
       bg.on('pointerdown', () => {
         if (this.onPick) this.onPick(i);
       });
 
-      this.cards.push({ bg, border, kind, name, desc, base: c });
+      this.cards.push(cardView);
     }
 
     this.setVisible(false);
@@ -169,7 +173,8 @@ export class LevelUpPanel {
       this.fitTextToZone(c.name, o.name, z.nameMaxW, z.nameMaxH, NAME_FONT.start, TEXT_HARD_FLOOR);
       // 描述：在 desc 分区内自适应换行/缩字，绝不溢出卡片
       this.fitTextToZone(c.desc, o.desc, z.descMaxW, z.descMaxH, DESC_FONT.start, TEXT_HARD_FLOOR);
-      c.bg.setStrokeStyle(3, KIND_COLOR[o.kind] ?? 0x3d6c9e);
+      c.kindColor = KIND_COLOR[o.kind] ?? 0x3d6c9e;
+      c.bg.setStrokeStyle(3, c.kindColor);
     }
     this.title.setVisible(true);
     this.overlay.setVisible(true);

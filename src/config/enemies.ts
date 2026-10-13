@@ -14,6 +14,9 @@ export interface EnemyDef {
   goldChance: number;// 掉金币概率
   radius: number;    // 碰撞半径
   scale: number;     // 贴图缩放
+  // v0.12.0 精英：稀有出场（不混普通怪海）、体型放大、发光边框、出场时屏幕边缘闪光
+  elite?: boolean;
+  eliteScale?: number;  // 精英体型倍率（默认 1.6）
   move?: 'chase' | 'float' | 'dash';  // v0.11.0 移动模式：默认 chase（直线追踪）
   // 水母麻痹圈：interval 间隔 / telegraph 预警时长 / radius 圈半径 / damage 命中伤害
   aura?: { interval: number; telegraph: number; radius: number; damage: number; slowFactor: number; slowDur: number };
@@ -34,17 +37,19 @@ export const ENEMIES: Record<string, EnemyDef> = {
     id: 'fat', name: '肥鱼', texture: 'enemy_fat',
     hp: 60, speed: 50, damage: 15, xp: 9, goldChance: 0.5, radius: 26, scale: 1.4
   },
-  // v0.11.0 水母：漂浮逼近，周期性停下蓄「麻痹圈」
+  // v0.12.0 水母·精英：漂浮逼近 + 周期性蓄「麻痹圈」（机制保留，从普通怪转为稀有精英）
   jelly: {
     id: 'jelly', name: '水母', texture: 'enemy_jelly',
-    hp: 30, speed: 42, damage: 8, xp: 6, goldChance: 0.25, radius: 20, scale: 1,
+    hp: 60, speed: 46, damage: 12, xp: 24, goldChance: 0.5, radius: 20, scale: 1,
+    elite: true, eliteScale: 1.6,
     move: 'float',
     aura: { interval: 4.2, telegraph: 1.1, radius: 130, damage: 10, slowFactor: 0.5, slowDur: 1.6 }
   },
-  // v0.11.0 灯笼鱼：慢速逼近 + 周期直线冲刺
+  // v0.12.0 灯笼鱼·精英：慢速逼近 + 周期直线冲刺（机制保留）
   lantern: {
     id: 'lantern', name: '灯笼鱼', texture: 'enemy_lantern',
-    hp: 26, speed: 70, damage: 9, xp: 6, goldChance: 0.25, radius: 15, scale: 1,
+    hp: 52, speed: 76, damage: 13, xp: 22, goldChance: 0.5, radius: 15, scale: 1,
+    elite: true, eliteScale: 1.6,
     move: 'dash',
     dash: { cd: 4.5, dur: 0.55, speed: 520 }
   },

@@ -4,6 +4,7 @@
 // 让手机玩家明确知道"拖哪里、往哪拖"；点击 HUD 按钮等 UI 时不误触摇杆。
 import Phaser from 'phaser';
 import { computeJoystick, type JoystickResult } from './joystick.ts';
+import { GAME_W } from '../config/balance.ts';
 
 // 供自动化验证与调试读取的摇杆状态（与绘制保持一致）
 export interface JoystickViewState {
@@ -25,7 +26,8 @@ export class InputSystem {
   private curX = 0;
   private curY = 0;
   private readonly maxRadius = 72;   // 拖到这个距离即为满速
-  private readonly deadZone = 5;     // 死区：防止手指微抖导致漂移
+  private readonly deadZone = 10;    // v0.12.0 死区 5→10px：防止手指微抖漂移
+  private readonly leftBound = GAME_W / 2;  // v0.12.0 摇杆只响应左半屏（右半留给后续操作）
   private keys: Record<string, Phaser.Input.Keyboard.Key> = {};
   private joystickGfx: Phaser.GameObjects.Graphics;
   private joy: JoystickResult = { dirX: 0, dirY: 0, magnitude: 0, knobX: 0, knobY: 0 };
@@ -63,6 +65,7 @@ export class InputSystem {
   private onDown(p: Phaser.Input.Pointer): void {
     if (this.activeId !== -1) return;   // 只跟踪第一根手指
     if (this.isTouchingUI(p)) return;   // 点按钮/卡片不触发摇杆
+    if (p.x > this.leftBound) return;   // v0.12.0 只在左半屏启动摇杆
     this.activeId = p.id;
     this.downX = this.curX = p.x;
     this.downY = this.curY = p.y;

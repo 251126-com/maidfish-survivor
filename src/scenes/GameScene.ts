@@ -3,7 +3,7 @@
 import Phaser from 'phaser';
 import {
   WORLD_W, WORLD_H, GAME_W, GAME_H, PLAYER_BASE, GAME_DURATION, BOSS_TIME, BOSS_WARN_TIME,
-  RICE_HEAL, ARMOR_MAX
+  RICE_HEAL, ARMOR_MAX, ELITE_START_SEC, ELITE_SPAWN_INTERVAL, ELITE_MAX_ALIVE
 } from '../config/balance.ts';
 import { currentPhase, pickEnemy, WAVE_EVENTS } from '../config/timeline.ts';
 import { BG_ORDER, randomStartIndex } from '../config/background.ts';
@@ -77,6 +77,17 @@ export class GameScene extends Phaser.Scene {
   // v0.11.0 水母麻痹圈绘制层（深度在敌人之上、子弹之下）
   private jellyTeleG: Phaser.GameObjects.Graphics | null = null;
   private waveBannerText: Phaser.GameObjects.Text | null = null;
+  // v0.12.0 精英：刷出计时 / 屏幕边缘闪光提示 / 发光边框层
+  private eliteTimer = ELITE_START_SEC;
+  private eliteWarn: { x: number; y: number; t: number } | null = null;
+  private eliteWarnG: Phaser.GameObjects.Graphics | null = null;
+  private eliteG: Phaser.GameObjects.Graphics | null = null;
+  private elitePulse = 0;
+  // v0.12.0 连续拾取：2s 窗口内递增音调
+  private pickupStreak = 0;
+  private pickupStreakT = 0;
+  // v0.12.0 底部状态条（回血绿/护甲蓝）
+  private statusBar: Phaser.GameObjects.Text | null = null;
   // v0.10.0 打击感：死亡粒子 / 顿帧（v0.11.0 移除连杀横幅与里程碑顿帧）
   private deathFx!: DeathFx;
   private hitStopScale = 1;      // v0.10.0 顿帧当前时间缩放（大事件短暂放慢）
@@ -151,6 +162,9 @@ export class GameScene extends Phaser.Scene {
     this.enemyBullets = new EnemyBulletSystem(this);
     this.bossTeleG = this.add.graphics().setDepth(15);
     this.jellyTeleG = this.add.graphics().setDepth(14);
+    // v0.12.0 精英表现层：边缘闪光提示（屏幕空间）+ 发光边框（世界跟随）
+    this.eliteWarnG = this.add.graphics().setDepth(96).setScrollFactor(0);
+    this.eliteG = this.add.graphics().setDepth(12);
 
     this.weapons = new WeaponSystem(this);
     this.weapons.addWeapon('rifle');   // 默认武器
@@ -163,22 +177,29 @@ export class GameScene extends Phaser.Scene {
     // v0.10.0 打击感系统：击杀爆散粒子 + 连杀计数
     this.deathFx = new DeathFx(this);
     this.drops.onPickup = (kind, value) => {
+      // v0.12.0 连续拾取：2s 窗口内递增音调（上限 8 档），任何拾取都推进
+      this.pickupStreakT = 2.2;
+      this.pickupStreak = Math.min(8, this.pickupStreak + 1);
       if (kind === 'xp') {
         this.levelSys.addXp(value, this.stats.xpMult);
-        sfx.pickup();
+        sfx.pickup(this.pickupStreak);
       } else if (kind === 'gold') {
         this.gold += value;
         sfx.coin();
       } else if (kind === 'rice') {
-        // 大白饭：回血并钳制到最大 HP，浮字明确显示物品名与回血数值（v0.11.0）
+        // 大白饭：回血并钳制到最大 HP，浮字 + 绿环 + 底部状态条
         const healed = this.player.heal(RICE_HEAL);
-        sfx.pickup();
+        sfx.pickup(this.pickupStreak);
         this.showPickupFeedback(`大白饭 回血+${Math.round(healed)}`, 0x7fe8a0);
+        this.showPickupRing(0x4de8c2);
+        this.showStatusBar(`大白饭 +${Math.round(healed)}`, '#4de8c2');
       } else if (kind === 'bowl') {
         // 铁盆：获得/刷新 30 护甲；已满则提示（不叠加超上限）
         const st = this.player.gainArmor();
-        sfx.pickup();
+        sfx.pickup(this.pickupStreak);
         this.showPickupFeedback(st === 'full' ? '铁盆 护甲已满' : `铁盆 护甲+${ARMOR_MAX}`, 0x6fb8ff);
+        this.showPickupRing(0x4a9fe8);
+        this.showStatusBar(st === 'full' ? '护甲已满' : `护甲 +${ARMOR_MAX}`, '#4a9fe8');
       }
     };
 
@@ -240,6 +261,9 @@ export class GameScene extends Phaser.Scene {
       this.player.destroy();   // v0.9.1：幂等销毁玩家 display 对象，退出/重开不泄漏
       this.bossTeleG?.destroy();
       this.bossBannerText?.destroy();
+      this.eliteWarnG?.destroy();
+      this.eliteG?.destroy();
+      this.statusBar?.destroy();
       this.bgLayer.destroy();
       this.inputSys.destroy();
       this.hud.destroy();
@@ -299,6 +323,13 @@ export class GameScene extends Phaser.Scene {
     this.collideEnemyPlayer();
     // v0.11.0 水母麻痹圈：绘制蓄圈 + 结算命中伤害/减速
     this.updateJellyAuras();
+    this.updateEliteGlow();
+    this.updateEliteWarn(dt);
+    // v0.12.0 连续拾取窗口衰减
+    if (this.pickupStreakT > 0) {
+      this.pickupStreakT -= dt;
+      if (this.pickupStreakT <= 0) this.pickupStreak = 0;
+    }
     this.drops.update(dt, this.player);
     // v0.10.0：击杀粒子更新（纯对象池，量少；v0.11.0 移除连杀窗口）
     this.deathFx.update(dt);
@@ -427,6 +458,23 @@ export class GameScene extends Phaser.Scene {
         for (let i = 0; i < n; i++) this.spawnEnemyAt(id, ev.radius);
       }
       this.showWaveBanner(ev.label);
+    }
+
+    // v0.12.0 精英独立刷出：水母/灯笼鱼不混普通怪海，每波 1-2 只，屏幕边缘闪光提示
+    if (this.elapsed >= ELITE_START_SEC) {
+      this.eliteTimer -= dt;
+      if (this.eliteTimer <= 0) {
+        this.eliteTimer = ELITE_SPAWN_INTERVAL * (0.8 + Math.random() * 0.4);
+        const eliteCount = this.enemies.live.filter(e => e.active && e.isElite).length;
+        if (eliteCount < ELITE_MAX_ALIVE) {
+          const id = Math.random() < 0.5 ? 'jelly' : 'lantern';
+          const e = this.spawnEnemy(id);
+          if (e) {
+            this.eliteWarn = { x: e.x, y: e.y, t: 1.3 };
+            sfx.boss();
+          }
+        }
+      }
     }
 
     const phase = currentPhase(this.elapsed);
@@ -796,6 +844,100 @@ export class GameScene extends Phaser.Scene {
     return w.__DROP_RNG ?? Math.random;
   }
 
+  // v0.12.0 拾取反馈：角色周围闪光环（回血绿 / 护甲蓝），扩散淡出
+  private showPickupRing(color: number): void {
+    const ring = this.add.circle(this.player.x, this.player.y, 10, color, 0.45);
+    ring.setDepth(30).setStrokeStyle(4, color, 0.9);
+    this.tweens.add({
+      targets: ring,
+      scale: 2.4,
+      alpha: 0,
+      duration: 420,
+      ease: 'Cubic.easeOut',
+      onComplete: () => ring.destroy()
+    });
+  }
+
+  // v0.12.0 底部短暂状态条：回血/护甲等大事记，1s 后淡出
+  private showStatusBar(text: string, color: string): void {
+    if (this.statusBar) { this.statusBar.destroy(); this.statusBar = null; }
+    this.statusBar = this.add.text(GAME_W / 2, GAME_H - 108, text, {
+      fontFamily: 'monospace', fontSize: '19px', color,
+      stroke: '#062033', strokeThickness: 4,
+      backgroundColor: 'rgba(6,16,28,0.5)'
+    }).setOrigin(0.5).setDepth(96).setScrollFactor(0).setAlpha(0.95);
+    this.tweens.add({
+      targets: this.statusBar,
+      alpha: 0,
+      delay: 850,
+      duration: 420,
+      onComplete: () => { if (this.statusBar) { this.statusBar.destroy(); this.statusBar = null; } }
+    });
+  }
+
+  // v0.12.0 精英发光边框：体型放大 + 呼吸光环，一眼认出"这是精英不是杂鱼"
+  private updateEliteGlow(): void {
+    const g = this.eliteG;
+    if (!g) return;
+    g.clear();
+    this.elitePulse += 0.1;
+    const pulse = 0.6 + 0.4 * Math.sin(this.elitePulse);
+    const live = this.enemies.live;
+    for (let i = 0; i < live.length; i++) {
+      const e = live[i];
+      if (!e.active || !e.isElite) continue;
+      const color = e.def.id === 'jelly' ? 0x9a6ff0 : 0xffb04d;
+      const r = e.radius * e.sprite.scaleX + 8 + pulse * 5;
+      g.lineStyle(3, color, 0.45 + 0.35 * pulse);
+      g.strokeCircle(e.x, e.y, r);
+      g.fillStyle(color, 0.07 + 0.05 * pulse);
+      g.fillCircle(e.x, e.y, r);
+    }
+  }
+
+  // v0.12.0 精英出场：屏幕边缘闪光提示（指向入场方向，不打断操作，~1.3s 淡出）
+  private updateEliteWarn(dt: number): void {
+    const g = this.eliteWarnG;
+    if (!g) return;
+    g.clear();
+    const w = this.eliteWarn;
+    if (!w) return;
+    w.t -= dt;
+    if (w.t <= 0) { this.eliteWarn = null; return; }
+
+    const cam = this.cameras.main;
+    const cx = cam.scrollX + cam.width / 2;
+    const cy = cam.scrollY + cam.height / 2;
+    const dx = w.x - cx;
+    const dy = w.y - cy;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    const hw = cam.width / 2;
+    const hh = cam.height / 2;
+    let ex, ey;
+    if (Math.abs(dx) * hh > Math.abs(dy) * hw) {
+      ex = Math.sign(dx) * hw;
+      ey = (dy / Math.abs(dx)) * hw;
+    } else {
+      ey = Math.sign(dy) * hh;
+      ex = (dx / Math.abs(dy)) * hh;
+    }
+    const sx = hw + ex;
+    const sy = hh + ey;
+    const pulse = 0.5 + 0.5 * Math.sin(w.t * 12);
+    const fade = Math.min(1, w.t / 0.3);
+    const ang = Math.atan2(dy, dx);
+    g.lineStyle(5, 0xffd447, 0.5 + 0.5 * pulse * fade);
+    g.beginPath();
+    for (let k = -1; k <= 1; k++) {
+      const a = ang + Math.PI + k * 0.4;
+      g.moveTo(sx + Math.cos(a) * 34, sy + Math.sin(a) * 34);
+      g.lineTo(sx, sy);
+    }
+    g.strokePath();
+    g.fillStyle(0xffd447, 0.85 * fade);
+    g.fillCircle(sx, sy, 5);
+  }
+
   // 拾取反馈浮动文本：玩家头顶升起、淡出、自动销毁
   // v0.9.1 修复：世界坐标 + scrollFactor(0) 会在相机滚动后出现在屏外/错位 → 改世界跟随(1)，与伤害数字一致
   private showPickupFeedback(text: string, color: number): void {
@@ -846,7 +988,7 @@ export class GameScene extends Phaser.Scene {
 
   private checkLevelUp(): void {
     if (this.levelSys.pending <= 0) return;
-    const owned = this.weapons.owned.map(w => ({ id: w.def.id, level: w.level, maxed: w.maxed }));
+    const owned = this.weapons.owned.map(w => ({ id: w.def.id, level: w.level, maxed: w.maxed, mutation: w.mutation?.id ?? null }));
     // E2E 调试钩子：__UPGRADE_FORCE_ID 指定某张卡必须出现在面板（验收"大白饭"升级卡用）。
     // 未设置时行为与线上完全一致（rollUpgradeOptions 默认 Math.random 洗牌）。
     const force = (window as unknown as { __UPGRADE_FORCE_ID?: string }).__UPGRADE_FORCE_ID;
@@ -885,6 +1027,13 @@ export class GameScene extends Phaser.Scene {
       case 'evolution': {
         // 进化是质变：换掉武器形态，给一个专门的音效
         if (this.weapons.evolveWeapon(opt.id)) sfx.evolve();
+        break;
+      }
+      case 'mutation': {
+        // v0.12.0 质变升级：给对应武器挂上质变分支（金色卡），用进化同款音效强调
+        const target = this.weapons.owned.find(o =>
+          o.def.mutations?.some(m => m.id === opt.id));
+        if (target && this.weapons.mutateWeapon(target.def.id, opt.id)) sfx.evolve();
         break;
       }
       case 'buff': {

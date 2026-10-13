@@ -23,23 +23,24 @@ export const SPAWN_TIMELINE: SpawnPhase[] = [
     weights: [['fish', 10]] },
   { fromSec: 22,  intervalMs: 800,  batch: 2, maxAlive: 45,
     weights: [['fish', 10]] },
-  // v0.11.0: 水母 40s 起少量登场（慢速+蓄圈，不冲击开局容错），灯笼鱼 60s 起登场
+  // v0.12.0: 水母/灯笼鱼已改为稀有精英（见 GameScene 独立刷出），普通怪海不再混入，
+  // 普通怪只保留撞击威胁，数值成长只动血/速/伤。
   { fromSec: 40,  intervalMs: 680,  batch: 3, maxAlive: 65,
-    weights: [['fish', 7], ['dart', 2], ['jelly', 1]] },
+    weights: [['fish', 8], ['dart', 2]] },
   { fromSec: 60,  intervalMs: 600,  batch: 3, maxAlive: 90,
-    weights: [['fish', 6], ['dart', 2], ['fat', 1], ['jelly', 1], ['lantern', 1]] },
+    weights: [['fish', 7], ['dart', 2], ['fat', 1]] },
   { fromSec: 120, intervalMs: 500,  batch: 3, maxAlive: 150,
-    weights: [['fish', 5], ['dart', 3], ['fat', 2], ['jelly', 1], ['lantern', 1]] },
+    weights: [['fish', 5], ['dart', 3], ['fat', 2]] },
   // Boss(150s) 出场后小怪减速刷，聚焦 Boss 战
   { fromSec: 150, intervalMs: 2000, batch: 2, maxAlive: 100,
-    weights: [['fish', 4], ['dart', 3], ['fat', 2], ['jelly', 1]] },
+    weights: [['fish', 4], ['dart', 3], ['fat', 2]] },
   // Boss 击破后（通常 180s 之后）恢复正常刷怪节奏
   { fromSec: 180, intervalMs: 460,  batch: 4, maxAlive: 200,
-    weights: [['fish', 5], ['dart', 3], ['fat', 3], ['jelly', 2], ['lantern', 2]] },
+    weights: [['fish', 5], ['dart', 3], ['fat', 3]] },
   { fromSec: 300, intervalMs: 430,  batch: 4, maxAlive: 240,
-    weights: [['fish', 5], ['dart', 3], ['fat', 3], ['jelly', 2], ['lantern', 2]] },
+    weights: [['fish', 5], ['dart', 3], ['fat', 3]] },
   { fromSec: 480, intervalMs: 400,  batch: 5, maxAlive: 280,
-    weights: [['fish', 5], ['dart', 3], ['fat', 3], ['jelly', 2], ['lantern', 2]] }
+    weights: [['fish', 5], ['dart', 3], ['fat', 3]] }
 ];
 
 // v0.10.0 开场"波次"事件：在时间轴上额外触发的小规模浪潮，

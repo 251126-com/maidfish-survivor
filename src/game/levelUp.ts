@@ -5,7 +5,7 @@ import { xpNeed } from '../config/balance.ts';
 
 export const MAX_WEAPON_SLOTS = 6;
 
-export type OptionKind = 'new_weapon' | 'weapon_level' | 'buff' | 'passive' | 'evolution';
+export type OptionKind = 'new_weapon' | 'weapon_level' | 'buff' | 'passive' | 'evolution' | 'mutation';
 
 export interface UpgradeOption {
   kind: OptionKind;
@@ -14,7 +14,7 @@ export interface UpgradeOption {
   desc: string;
 }
 
-export interface OwnedInfo { id: string; level: number; maxed: boolean }
+export interface OwnedInfo { id: string; level: number; maxed: boolean; mutation?: string | null }
 
 // 生成三选一。
 // rng 可注入便于确定性测试；passives 为当前持有的被动道具等级表。
@@ -53,6 +53,18 @@ export function rollUpgradeOptions(
       name: `${w.name} Lv.${o.level + 1}`,
       desc: '提升该武器伤害与射速'
     });
+  }
+
+  // v0.12.0 质变分支：武器达 Lv3 且未挂质变时进入升级池，与普通升级共存。
+  // 金色边框由 UI 层按 kind='mutation' 高亮；此处以 3 倍权重入池（更高出现概率，玩家可感知）。
+  for (const o of owned) {
+    if (o.mutation) continue;          // 一把武器只能挂一个质变
+    const w = WEAPONS[o.id];
+    if (!w || !w.mutations || o.level < 3) continue;   // Lv3 起可质变
+    for (const m of w.mutations) {
+      const opt: UpgradeOption = { kind: 'mutation', id: m.id, name: m.name, desc: m.desc };
+      cands.push(opt, opt, opt);       // 3 倍权重
+    }
   }
 
   // 4) 被动道具（含进化钥匙）

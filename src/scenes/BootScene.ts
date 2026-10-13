@@ -198,6 +198,28 @@ export class BootScene extends Phaser.Scene {
     g.generateTexture('ebullet', 14, 14);
     g.destroy();
 
+    // v0.12.0 珊瑚弩箭：珊瑚色细长箭（穿透直线慢速）
+    g = this.add.graphics();
+    g.fillStyle(0xff7a6b, 1);
+    g.fillRoundedRect(0, 4, 26, 5, 2);
+    g.fillStyle(0xffc9c0, 1);
+    g.fillRoundedRect(16, 5, 10, 3, 1.5);
+    g.fillStyle(0xffe0d9, 1);
+    g.fillTriangle(2, 1, 2, 13, 10, 7);
+    g.generateTexture('bullet_coral', 26, 14);
+    g.destroy();
+
+    // v0.12.0 泡泡弹：半透明大泡泡（大范围低伤击退）
+    g = this.add.graphics();
+    g.fillStyle(0x9fe8ff, 0.35);
+    g.fillCircle(12, 12, 11);
+    g.lineStyle(2, 0xd8f6ff, 0.8);
+    g.strokeCircle(12, 12, 10);
+    g.fillStyle(0xffffff, 0.85);
+    g.fillCircle(9, 8, 3);
+    g.generateTexture('bullet_bubble', 24, 24);
+    g.destroy();
+
     // 尾鳍环绕体（鲸尾造型，呼应主角）
     g = this.add.graphics();
     g.fillStyle(0x8fe6ff, 0.95);

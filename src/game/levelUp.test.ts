@@ -86,10 +86,11 @@ test('武器槽满时不再提供新武器选项', () => {
   }
 });
 
-test('全部武器满级且槽满时，只可能返回 buff 或被动', () => {
+test('全部武器满级且槽满时，只可能返回 buff、被动或质变（v0.12.0 质变不因满级消失）', () => {
   const owned = OBTAINABLE_WEAPONS.map(w => ({ id: w.id, level: WEAPONS[w.id].maxLevel, maxed: true }));
   const opts = rollUpgradeOptions(owned, {}, () => 0.42, owned.length);
-  assert.ok(opts.every(o => o.kind === 'buff' || o.kind === 'passive'));
+  assert.ok(opts.every(o => o.kind === 'buff' || o.kind === 'passive' || o.kind === 'mutation'),
+    '满级槽满时升级池不应出现 new_weapon/weapon_level/evolution（质变是满级武器的末盘提升，属合法项）');
 });
 
 // ---------- 进化 ----------
@@ -152,4 +153,59 @@ test('选项数量不足 3 时返回实际数量（不报错）', () => {
   const owned = OBTAINABLE_WEAPONS.map(w => ({ id: w.id, level: WEAPONS[w.id].maxLevel, maxed: true }));
   const opts = rollUpgradeOptions(owned, {}, () => 0.5, owned.length);
   assert.ok(opts.length >= 1 && opts.length <= 3);
+});
+// ---------- v0.12.0 质变升级 ----------
+
+test('武器达 Lv3 后升级池出现质变卡（金色 kind），未满 3 级不出现', () => {
+  // Lv2：不应有质变
+  const owned2 = [{ id: 'rifle', level: 2, maxed: false }];
+  for (let seed = 0; seed < 40; seed++) {
+    const opts = rollUpgradeOptions(owned2, {}, det(seed));
+    assert.ok(!opts.some(o => o.kind === 'mutation'), 'Lv2 不应出现质变卡');
+  }
+  // Lv3：质变卡进入候选
+  const owned3 = [{ id: 'rifle', level: 3, maxed: false }];
+  let sawMutation = false;
+  for (let seed = 0; seed < 200; seed++) {
+    const opts = rollUpgradeOptions(owned3, {}, det(seed));
+    assert.equal(opts.length, 3);
+    for (const o of opts) {
+      if (o.kind === 'mutation') {
+        sawMutation = true;
+        assert.ok(o.name.includes('质变'), '质变卡名应带「质变」前缀');
+        const w = WEAPONS['rifle'];
+        assert.ok(w.mutations!.some(m => m.id === o.id), '质变 id 必须来自武器配置');
+      }
+    }
+  }
+  assert.ok(sawMutation, 'Lv3 步枪在 200 次采样里应至少出现一次质变卡（3倍权重）');
+});
+
+test('已挂质变的武器不再出现其质变卡', () => {
+  const owned = [{ id: 'shotgun', level: 4, maxed: false, mutation: 'sg_burn' }];
+  for (let seed = 0; seed < 60; seed++) {
+    const opts = rollUpgradeOptions(owned, {}, det(seed));
+    assert.ok(!opts.some(o => o.kind === 'mutation' && o.id === 'sg_burn'),
+      '已挂质变 sg_burn 后不应再出现该卡');
+  }
+});
+
+test('质变与普通升级在池中共存：同一把武器可同时出现强化卡与质变卡', () => {
+  const owned = [{ id: 'rifle', level: 3, maxed: false }];
+  let both = false;
+  for (let seed = 0; seed < 200; seed++) {
+    const opts = rollUpgradeOptions(owned, {}, det(seed));
+    if (opts.some(o => o.kind === 'weapon_level' && o.id === 'rifle')
+      && opts.some(o => o.kind === 'mutation')) { both = true; break; }
+  }
+  assert.ok(both, '步枪 Lv3 的三选一应有机会同时出现「武器强化」与「质变」');
+});
+
+test('新武器（珊瑚弩/电鳗/泡泡枪/激光）都在可获取池，且 Lv3 有质变分支', () => {
+  for (const id of ['coral', 'eel', 'bubble', 'laser']) {
+    const w = WEAPONS[id];
+    assert.ok(w, `${id} 武器必须存在`);
+    assert.ok(OBTAINABLE_WEAPONS.some(x => x.id === id), `${id} 应可从升级池获取`);
+    assert.ok(w.mutations && w.mutations.length >= 2, `${id} 应有质变分支`);
+  }
 });

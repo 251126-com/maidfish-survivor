@@ -127,9 +127,11 @@ export class Sfx {
     this.tone(520, 0.13, 'triangle', 0.09, 170);
   }
 
-  pickup(): void {
+  // v0.12.0 连续拾取音调递增：step 越大音调越高（2s 窗口内连续拾取，见 GameScene.pickupStreak）
+  pickup(step = 0): void {
     if (!this.throttle('pickup', 50)) return;
-    this.tone(1180, 0.05, 'sine', 0.05, 1560);
+    const base = Math.min(1560, 1080 + step * 90);
+    this.tone(base, 0.055, 'sine', 0.06, Math.min(2400, base * 1.45));
   }
 
   coin(): void {
