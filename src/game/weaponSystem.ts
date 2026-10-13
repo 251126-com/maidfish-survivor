@@ -42,6 +42,8 @@ export class WeaponSystem {
   readonly owned: OwnedWeapon[] = [];
   private bulletPool: EntityPool<Bullet>;
   readonly damageText: DamageTextSystem;
+  // v0.10.0 命中特效回调（暴击火花等）：由 GameScene 注入，保持本系统与表现解耦
+  onHitFx: ((e: Enemy, crit: boolean) => void) | null = null;
   private finSprites: Phaser.GameObjects.Image[] = [];
   private finAngle = 0;
   private neighborBuf: Enemy[] = [];
@@ -184,7 +186,7 @@ export class WeaponSystem {
         if (dx * dx + dy * dy > rr * rr) continue;
 
         b.hitUids.push(e.uid);
-        this.applyDamage(e, b.damage, enemies, player);
+        this.applyDamage(e, b.damage, enemies, player, { x: b.vx, y: b.vy });
 
         // 溅射：命中点周围的其他敌人吃 50% 伤害
         if (b.splash > 0) {
@@ -196,7 +198,7 @@ export class WeaponSystem {
             const sdx = o.x - e.x;
             const sdy = o.y - e.y;
             if (sdx * sdx + sdy * sdy > b.splash * b.splash) continue;
-            this.applyDamage(o, b.damage * 0.5, enemies, player);
+            this.applyDamage(o, b.damage * 0.5, enemies, player, { x: b.vx, y: b.vy });
           }
         }
 
@@ -238,17 +240,24 @@ export class WeaponSystem {
         if (dx * dx + dy * dy > rr * rr) continue;
         if (e.orbitCd > 0) continue;
         e.orbitCd = s.cooldown;
-        this.applyDamage(e, s.damage * player.stats.damageMult, enemies, player);
+        this.applyDamage(e, s.damage * player.stats.damageMult, enemies, player, { x: e.x - fx, y: e.y - fy });
       }
     }
   }
 
-  private applyDamage(e: Enemy, base: number, enemies: EnemySystem, player: Player): void {
+  private applyDamage(e: Enemy, base: number, enemies: EnemySystem, player: Player, dir?: { x: number; y: number }): void {
     let dmg = base;
     const crit = Math.random() < player.stats.critChance;
     if (crit) dmg *= player.stats.critMult;
     // 浮动伤害数字：命中/暴击反馈的核心一环
     this.damageText.show(e.x, e.y, dmg, { crit });
+    // v0.10.0 命中轻击退（Boss 免疫）：沿弹道方向，按敌人重量分级
+    if (dir) {
+      const power = e.def.id === 'fat' ? 130 : e.def.id === 'dart' ? 160 : 110;
+      enemies.knock(e, dir.x, dir.y, power);
+    }
+    // v0.10.0 暴击命中火花（克制 3 粒）
+    if (crit) this.onHitFx?.(e, crit);
     enemies.damage(e, dmg);
   }
 

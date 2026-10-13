@@ -56,3 +56,31 @@ test('切换：全屏中→退出，否则→进入', () => {
   assert.equal(r, 'ok');
   assert.equal(exit, 2);
 });
+
+// ---------- v0.9.1: 全屏 Promise 真实失败返回 ----------
+import { requestFullscreenAsync } from './fullscreen.ts';
+
+test('requestFullscreenAsync: resolve → ok（真实进入全屏）', async () => {
+  const el: any = { requestFullscreen: () => Promise.resolve() };
+  assert.equal(await requestFullscreenAsync(el, 'desktop'), 'ok');
+});
+
+test('requestFullscreenAsync: reject → failed（浏览器拒绝全屏）', async () => {
+  const el: any = { requestFullscreen: () => Promise.reject(new Error('denied')) };
+  assert.equal(await requestFullscreenAsync(el, 'desktop'), 'failed');
+});
+
+test('requestFullscreenAsync: 同步抛错同样回 failed', async () => {
+  const el: any = { requestFullscreen: () => { throw new Error('sync-err'); } };
+  assert.equal(await requestFullscreenAsync(el, 'desktop'), 'failed');
+});
+
+test('requestFullscreenAsync: 不支持(空元素/iOS) → unsupported', async () => {
+  const el: any = { requestFullscreen: () => Promise.resolve() };
+  assert.equal(await requestFullscreenAsync(null, 'desktop'), 'unsupported');
+  assert.equal(await requestFullscreenAsync(el, 'ios'), 'unsupported');
+});
+
+test('requestFullscreenAsync: 无方法 → pending', async () => {
+  assert.equal(await requestFullscreenAsync({} as any, 'desktop'), 'pending');
+});

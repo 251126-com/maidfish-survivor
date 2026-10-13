@@ -1,4 +1,6 @@
-// 敌人系统：池化敌人 + 追踪玩家 + 分离力（防止叠成一坨）+ 受击闪白
+// 敌人系统：池化敌人 + 追踪玩家 + 分离力（防止叠成一坨）+ 受击闪白 + 轻击退
+// v0.10.0：命中后沿弹道方向给一段指数衰减的击退位移（Boss 免疫击退），
+// 受击闪白从 0.08s 提到 0.11s，让"打中"更有存在感，但震屏仍只留给大事件。
 import Phaser from 'phaser';
 import { EntityPool, type Poolable } from '../core/pool.ts';
 import { SpatialHash } from '../core/spatialHash.ts';
@@ -22,11 +24,14 @@ export class Enemy implements Poolable {
   goldChance = 0;
   isBoss = false;
   orbitCd = 0;        // 环绕武器对该敌人的独立命中冷却
+  // v0.10.0 击退位移（px/s 级初速，指数衰减到 0）
+  knockX = 0;
+  knockY = 0;
   def!: EnemyDef;
   sprite!: Phaser.GameObjects.Image;
   flash = 0;
 
-  spawn(): void { this.flash = 0; this.orbitCd = 0; }
+  spawn(): void { this.flash = 0; this.orbitCd = 0; this.knockX = 0; this.knockY = 0; }
   despawn(): void { this.sprite.setVisible(false); }
 }
 
@@ -59,7 +64,8 @@ export class EnemySystem {
     e.def = def;
     e.x = x;
     e.y = y;
-    e.maxHp = def.hp * hpScale(elapsed);
+    // v0.10.0: Boss 血量固定不随 elapsed 膨胀（Boss 是节奏事件，普通敌人仍按时间成长）
+    e.maxHp = e.isBoss ? def.hp : def.hp * hpScale(elapsed);
     e.hp = e.maxHp;
     e.speed = def.speed * speedScale(elapsed);
     e.damage = def.damage;
@@ -76,7 +82,7 @@ export class EnemySystem {
     return e;
   }
 
-  // 每帧：重建空间哈希 → 追踪 + 分离
+  // 每帧：重建空间哈希 → 追踪 + 分离 + 击退衰减
   update(dt: number, px: number, py: number): void {
     const live = this.pool.live;
 
@@ -119,6 +125,15 @@ export class EnemySystem {
       const ml = Math.hypot(mx, my) || 1;
       e.x += (mx / ml) * e.speed * dt;
       e.y += (my / ml) * e.speed * dt;
+      // v0.10.0 击退：独立于追踪，指数衰减（时间常数 ~0.35s），Boss 不受击退
+      if (e.knockX !== 0 || e.knockY !== 0) {
+        const kf = Math.exp(-6.5 * dt);
+        e.x += e.knockX * dt;
+        e.y += e.knockY * dt;
+        e.knockX *= kf;
+        e.knockY *= kf;
+        if (Math.abs(e.knockX) < 1 && Math.abs(e.knockY) < 1) { e.knockX = 0; e.knockY = 0; }
+      }
       e.x = Phaser.Math.Clamp(e.x, 0, WORLD_W);
       e.y = Phaser.Math.Clamp(e.y, 0, WORLD_H);
 
@@ -134,10 +149,18 @@ export class EnemySystem {
     }
   }
 
+  // 沿 (dx,dy) 方向给敌人击退初速；Boss 免疫
+  knock(e: Enemy, dx: number, dy: number, power: number): void {
+    if (!e.active || e.isBoss) return;
+    const l = Math.hypot(dx, dy) || 1;
+    e.knockX += (dx / l) * power;
+    e.knockY += (dy / l) * power;
+  }
+
   // 造成伤害；返回是否击杀
   damage(e: Enemy, amount: number): boolean {
     e.hp -= amount;
-    e.flash = 0.08;
+    e.flash = 0.11;   // v0.10.0: 闪白稍长，命中感更清晰
     e.sprite.setTint(0xffffff);
     if (e.hp <= 0) {
       if (this.onKill) this.onKill(e);

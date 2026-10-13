@@ -8,7 +8,11 @@ export const WORLD_H = 4000;
 
 // 单局时长与 Boss 触发点（秒）
 export const GAME_DURATION = 12 * 60;
-export const BOSS_TIME = 10 * 60;
+// v0.10.0: Boss 从 600s 提前到 150s（120~180s 区间），普通玩家一局内必然能看到。
+// 保留完整三技能预警：Boss 出现更早，但血量固定不随时间膨胀（见 enemySystem.spawn）。
+export const BOSS_TIME = 150;
+// Boss 登场前预警横幅的提前量（秒）
+export const BOSS_WARN_TIME = 5;
 
 // 玩家基础属性（永久强化在此基础上加成）
 export const PLAYER_BASE = {
@@ -21,9 +25,11 @@ export const PLAYER_BASE = {
   xpMult: 1.0        // 经验倍率
 };
 
-// 升级所需经验：need(level) = floor(5 + level*10 + level^2 * 2)
+// 升级所需经验：need(level) = floor(4 + level*9 + level^2 * 1.5)
+// v0.10.0: 前几级门槛下调约 20%（17→14、33→28…），配合开局波次让首次升级出现在 ~20s 内。
+// 后段增速放缓（level^2 系数 2→1.5），避免中期升级越来越漫长导致成长反馈断裂。
 export function xpNeed(level: number): number {
-  return Math.floor(5 + level * 10 + level * level * 2);
+  return Math.floor(4 + level * 9 + level * level * 1.5);
 }
 
 // 性能预算：硬上限，超出不再生成（对象池会复用）
@@ -32,7 +38,8 @@ export const POOL_LIMIT = {
   bullet: 400,
   gem: 200,
   damageText: 40,
-  enemyBullet: 120   // v0.9.0 Boss 弹幕（扇弹）池
+  enemyBullet: 120,   // v0.9.0 Boss 弹幕（扇弹）池
+  deathFx: 160        // v0.10.0 击杀爆散粒子池（克制数量，复用不新建）
 };
 
 // 敌人属性随时间成长：每分钟 +35% 生命，+3% 移速（封顶）

@@ -29,7 +29,7 @@ export const WEAPONS: Record<string, WeaponDef> = {
     desc: '自动射击最近的敌人',
     maxLevel: 5,
     levels: [
-      { damage: 10, cooldown: 0.45, count: 1, pierce: 1, speed: 750, range: 700 },
+      { damage: 12, cooldown: 0.42, count: 1, pierce: 1, speed: 750, range: 700 },
       { damage: 14, cooldown: 0.42, count: 1, pierce: 1, speed: 750, range: 700 },
       { damage: 14, cooldown: 0.38, count: 2, pierce: 1, speed: 780, range: 720 },
       { damage: 18, cooldown: 0.34, count: 2, pierce: 2, speed: 800, range: 740 },

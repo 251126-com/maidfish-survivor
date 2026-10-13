@@ -26,7 +26,7 @@ export function isFullscreen(
   return !!(d.fullscreenElement || wd.webkitFullscreenElement);
 }
 
-export type FsRequest = 'ok' | 'pending' | 'unsupported';
+export type FsRequest = 'ok' | 'pending' | 'unsupported' | 'failed';
 
 export function requestFullscreen(
   el: Element | null,
@@ -47,6 +47,38 @@ export function requestFullscreen(
     return 'ok';
   }
   return 'pending';
+}
+
+/**
+ * v0.9.1: 全屏请求的真实结果（Promise 级）。
+ * 同步版 requestFullscreen 只能返回「已发起」；浏览器可能在随后拒绝请求，
+ * 这里把 resolve→ok / reject→failed 真正返回给调用方（UI 可提示"全屏失败"）。
+ */
+export function requestFullscreenAsync(
+  el: Element | null,
+  kind: FullscreenKind
+): Promise<FsRequest> {
+  if (!elementFullscreenSupported(kind) || !el) return Promise.resolve('unsupported');
+  const e = el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
+  try {
+    if (typeof e.requestFullscreen === 'function') {
+      return Promise.resolve(e.requestFullscreen())
+        .then(() => 'ok' as FsRequest)
+        .catch(() => 'failed' as FsRequest);
+    }
+    if (typeof e.webkitRequestFullscreen === 'function') {
+      const p = e.webkitRequestFullscreen();
+      if (p && typeof (p as Promise<void>).then === 'function') {
+        return (p as Promise<void>)
+          .then(() => 'ok' as FsRequest)
+          .catch(() => 'failed' as FsRequest);
+      }
+      return Promise.resolve('pending');
+    }
+  } catch {
+    return Promise.resolve('failed');   // 同步抛错同样视为失败
+  }
+  return Promise.resolve('pending');
 }
 
 export function exitFullscreen(

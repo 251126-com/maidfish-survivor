@@ -1,11 +1,20 @@
 // 启动场景：用代码绘制所有占位贴图（无需美术资源即可跑通）
 // 所有纹理在内存里生成，后续换正式图集时只替换 key 对应的贴图即可
 import Phaser from 'phaser';
+import type { LoadingApi } from '../core/loadState.ts';
 
 export class BootScene extends Phaser.Scene {
   constructor() { super('Boot'); }
 
   preload(): void {
+    // v0.9.2 加载体验：DOM 覆盖层（index.html）显示实时进度；资源失败不阻塞进菜单
+    // （程序化贴图无外部依赖，Menu 对缺失背景有纯色兜底）。绝不把固定等待当修复。
+    const loading = (window as unknown as { __LOADING?: LoadingApi }).__LOADING;
+    this.load.on('progress', (p: number) => loading?.setProgress(p));
+    this.load.on('loaderror', (file: unknown) => {
+      const key = (file as { key?: string })?.key ?? 'unknown';
+      loading?.error(key);
+    });
     // 正式角色素材：用户设计图抠出的透明 PNG（保留白色头饰/围裙）
     this.load.image('player_whale', 'assets/player_whale.png');
     // 四张授权背景（3840x2160 原图已处理为 1920x1080 JPEG 放 public/assets/bg）
@@ -17,6 +26,8 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    // 所有资源已加载完成（preload 完成后才进入 create）→ 隐藏加载覆盖层，菜单秒开
+    (window as unknown as { __LOADING?: LoadingApi }).__LOADING?.ready();
     // 角色贴图已在 preload 从正式素材加载，不再程序化生成
     this.makeEnemies();
     this.makeProjectiles();

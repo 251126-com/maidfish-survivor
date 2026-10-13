@@ -1,5 +1,8 @@
 // 掉落系统：经验球/金币/大白饭/饭盆，池化 + 磁吸拾取
 // v0.7.0 新增两种特殊掉落：大白饭（回血）、饭盆（护甲）。
+// v0.10.0：击杀产生的掉落向玩家方向喷出（朝向分量 + 小扩散），
+//         并带 120ms 弹跳放大进场（Back.easeOut），让"掉东西"有清晰爽感；
+//         掉落仍全程池化，上限受 POOL_LIMIT.gem 约束，手机横屏稳定。
 import Phaser from 'phaser';
 import { EntityPool, type Poolable } from '../core/pool.ts';
 import { POOL_LIMIT } from '../config/balance.ts';
@@ -30,8 +33,10 @@ export class DropSystem {
   readonly pool: EntityPool<Gem>;
   // 拾取回调，由 GameScene 注入
   onPickup: ((kind: LootKind, value: number) => void) | null = null;
+  private scene: Phaser.Scene;
 
   constructor(scene: Phaser.Scene) {
+    this.scene = scene;
     this.pool = new EntityPool<Gem>(() => {
       const g = new Gem();
       g.sprite = scene.add.image(0, 0, 'gem_xp');
@@ -41,21 +46,41 @@ export class DropSystem {
     }, POOL_LIMIT.gem);
   }
 
-  spawn(x: number, y: number, kind: LootKind, value: number): void {
+  // towardX/towardY 可选：击杀时传入玩家位置，掉落会明显向玩家方向飞一段再磁吸
+  spawn(x: number, y: number, kind: LootKind, value: number, toward?: { x: number; y: number }): void {
     const g = this.pool.acquire();
     if (!g) return;
     g.x = x;
     g.y = y;
     g.kind = kind;
     g.value = value;
-    // 掉落时给一点随机初速，视觉更活
-    const a = Math.random() * Math.PI * 2;
-    const sp = 40 + Math.random() * 40;
-    g.vx = Math.cos(a) * sp;
-    g.vy = Math.sin(a) * sp;
+    if (toward) {
+      // 向玩家方向喷出：主方向 170~260 px/s + 垂直小扩散
+      const dx = toward.x - x;
+      const dy = toward.y - y;
+      const l = Math.hypot(dx, dy) || 1;
+      const sp = 170 + Math.random() * 90;
+      const spread = (Math.random() - 0.5) * 60;
+      g.vx = (dx / l) * sp + -dy / l * spread;
+      g.vy = (dy / l) * sp + dx / l * spread;
+    } else {
+      // 掉落时给一点随机初速，视觉更活
+      const a = Math.random() * Math.PI * 2;
+      const sp = 40 + Math.random() * 40;
+      g.vx = Math.cos(a) * sp;
+      g.vy = Math.sin(a) * sp;
+    }
     g.sprite.setTexture(LOOT_TEXTURE[kind] ?? 'gem_xp');
     g.sprite.setPosition(x, y);
     g.sprite.setVisible(true);
+    // 出场弹跳放大（复用池对象也重新播放）
+    g.sprite.setScale(0.4);
+    this.scene.tweens.add({
+      targets: g.sprite,
+      scale: 1,
+      duration: 120,
+      ease: 'Back.easeOut'
+    });
   }
 
   update(dt: number, player: Player): void {
@@ -69,10 +94,10 @@ export class DropSystem {
       const dy = player.y - g.y;
       const d2 = dx * dx + dy * dy;
 
-      // 磁吸：进入拾取范围后加速飞向玩家
+      // 磁吸：进入拾取范围后加速飞向玩家（v0.10.0 加速度略增，配合喷出更跟手）
       if (d2 < pickupSq) {
         const d = Math.sqrt(d2) || 1;
-        const pull = 900;   // 磁吸加速度
+        const pull = 1050;
         g.vx += (dx / d) * pull * dt;
         g.vy += (dy / d) * pull * dt;
       } else {

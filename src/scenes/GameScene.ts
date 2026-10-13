@@ -2,10 +2,10 @@
 // 顺序：输入 → 玩家移动 → 敌人更新 → 武器开火/碰撞 → 掉落 → 刷怪 → 升级 → 结算
 import Phaser from 'phaser';
 import {
-  WORLD_W, WORLD_H, GAME_W, GAME_H, PLAYER_BASE, GAME_DURATION, BOSS_TIME,
+  WORLD_W, WORLD_H, GAME_W, GAME_H, PLAYER_BASE, GAME_DURATION, BOSS_TIME, BOSS_WARN_TIME,
   RICE_HEAL, ARMOR_MAX
 } from '../config/balance.ts';
-import { currentPhase, pickEnemy } from '../config/timeline.ts';
+import { currentPhase, pickEnemy, WAVE_EVENTS } from '../config/timeline.ts';
 import { BG_ORDER, randomStartIndex } from '../config/background.ts';
 import { BUFF_POOL, PASSIVES, type PlayerStats } from '../config/upgrades.ts';
 import { loadSave, writeSave, metaBonus } from '../core/save.ts';
@@ -18,10 +18,14 @@ import { EnemyBulletSystem, bulletHitsPlayer } from '../game/enemyBullets.ts';
 import { BossBrain, type BossEvent, type SkillParams } from '../game/bossBrain.ts';
 import { DropSystem, type LootKind } from '../game/dropSystem.ts';
 import { rollSpecialDrop } from '../game/collectibles.ts';
+import { createFinishTimer, RESULT_DELAY_MS, type FinishTimer } from '../game/finishTimer.ts';
 import { InputSystem } from '../game/inputSystem.ts';
 import { BackgroundLayer } from '../game/backgroundLayer.ts';
 import { LevelSystem, rollUpgradeOptions, type UpgradeOption } from '../game/levelUp.ts';
 import { shakeForEvent } from '../game/feel.ts';
+import { DeathFx } from '../game/deathFx.ts';
+import { KillStreak } from '../game/killStreak.ts';
+import { hitStopSpec } from '../game/hitStop.ts';
 import { Hud } from '../ui/hud.ts';
 import { LevelUpPanel } from '../ui/levelUpPanel.ts';
 import { FloatingMenu } from '../ui/floatingMenu.ts';
@@ -60,13 +64,23 @@ export class GameScene extends Phaser.Scene {
   private gold = 0;
   private spawnTimer = 0;
   private bossSpawned = false;
+  private bossWarned = false;      // v0.10.0 Boss 登场前预警已播
+  private waveIdx = 0;             // v0.10.0 开场波次事件指针
   private isOver = false;
+  private finishTimer: FinishTimer | null = null;
+  private resultData: ResultData | null = null;
   // v0.9.0 Boss 战
   private bossBrain: BossBrain | null = null;
   private bossEnemy: Enemy | null = null;
   private enemyBullets: EnemyBulletSystem | null = null;
   private bossTeleG: Phaser.GameObjects.Graphics | null = null;
   private bossBannerText: Phaser.GameObjects.Text | null = null;
+  private waveBannerText: Phaser.GameObjects.Text | null = null;
+  // v0.10.0 打击感：死亡粒子 / 连杀 / 顿帧
+  private deathFx!: DeathFx;
+  private streak!: KillStreak;
+  private hitStopScale = 1;      // v0.10.0 顿帧当前时间缩放（大事件短暂放慢）
+  private hitStopUntil = 0;      // v0.10.0 顿帧结束墙钟时间戳（真实时间，防卡死）
   private paused = false;
   private pauseOverlay: Phaser.GameObjects.Rectangle | null = null;
   private pauseLabel: Phaser.GameObjects.Text | null = null;
@@ -139,8 +153,15 @@ export class GameScene extends Phaser.Scene {
 
     this.weapons = new WeaponSystem(this);
     this.weapons.addWeapon('rifle');   // 默认武器
+    // v0.10.0 命中特效：暴击火花（克制 3 粒）
+    this.weapons.onHitFx = (e, crit) => {
+      if (crit) this.deathFx?.spark(e.x, e.y, 3);
+    };
 
     this.drops = new DropSystem(this);
+    // v0.10.0 打击感系统：击杀爆散粒子 + 连杀计数
+    this.deathFx = new DeathFx(this);
+    this.streak = new KillStreak(3.0);
     this.drops.onPickup = (kind, value) => {
       if (kind === 'xp') {
         this.levelSys.addXp(value, this.stats.xpMult);
@@ -210,6 +231,11 @@ export class GameScene extends Phaser.Scene {
 
     // 场景退出时解绑输入监听，避免重复绑定
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.finishTimer?.reset();   // v0.9.1: 幂等清理墙钟计时器
+      this.finishTimer = null;
+      this.resultData = null;
+      this.hitStopScale = 1;       // v0.10.0: 顿帧状态复位，重开/退出不留缩放
+      this.hitStopUntil = 0;
       if (this.enemyBullets) this.enemyBullets.pool.releaseAll();
       this.player.destroy();   // v0.9.1：幂等销毁玩家 display 对象，退出/重开不泄漏
       this.bossTeleG?.destroy();
@@ -231,6 +257,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    // v0.9.1: 胜负展示墙钟计时器——isOver 也每帧进来 tick；暂停/升级面板打开时冻结，不提前进结算
+    if (this.finishTimer && this.finishTimer.tick(performance.now(), this.paused || this.panel.visible) && this.resultData) {
+      this.scene.start('Result', this.resultData);
+      this.finishTimer = null;
+      this.resultData = null;
+    }
     if (this.isOver || this.paused) return;
     if (this.panel.visible) return;   // 升级面板打开时暂停世界
 
@@ -239,7 +271,8 @@ export class GameScene extends Phaser.Scene {
     // 故意不放到更大：子弹最快 1200px/s，0.05s 单帧位移 60px，
     // 与碰撞查询半径(70)匹配，绝不穿模。低于 20fps 时游戏时间会轻微膨胀——
     // 这是有意的降级（变慢比穿模好）。
-    const dt = Math.min(delta / 1000, 0.05);
+    const rawDt = Math.min(delta / 1000, 0.05);
+    const dt = rawDt * this.hitStopScale;   // v0.10.0 顿帧：大事件短暂放慢游戏时间
     this.elapsed += dt;
 
     // 背景：跨过切换点就交叉淡入淡出下一张授权背景
@@ -265,6 +298,9 @@ export class GameScene extends Phaser.Scene {
 
     this.collideEnemyPlayer();
     this.drops.update(dt, this.player);
+    // v0.10.0：连杀窗口衰减 + 击杀粒子更新（纯对象池，量少）
+    this.streak.tick(dt);
+    this.deathFx.update(dt);
     this.updateSpawner(dt);
     this.checkLevelUp();
 
@@ -318,6 +354,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateSpawner(dt: number): void {
+    // Boss 登场前 BOSS_WARN_TIME 秒：预警横幅（只一次），给玩家提前走位/清小怪的时间
+    if (!this.bossSpawned && !this.bossWarned && this.elapsed >= BOSS_TIME - BOSS_WARN_TIME) {
+      this.bossWarned = true;
+      this.showBossBanner('⚠ 蓝色大肥鱼王 即将来袭！', '#ff9a4d');
+    }
     // Boss 到点登场（只一次）
     if (!this.bossSpawned && this.elapsed >= BOSS_TIME) {
       this.bossSpawned = true;
@@ -331,6 +372,16 @@ export class GameScene extends Phaser.Scene {
       const s = shakeForEvent('boss');
       this.cameras.main.shake(s.duration, s.intensity);
       this.showBossBanner('蓝色大肥鱼王 登场！', '#ffd447');
+    }
+
+    // v0.10.0 开场波次：时间轴小浪潮（更近半径进屏快）+ 横幅节奏反馈
+    while (this.waveIdx < WAVE_EVENTS.length && this.elapsed >= WAVE_EVENTS[this.waveIdx].atSec) {
+      const ev = WAVE_EVENTS[this.waveIdx];
+      this.waveIdx++;
+      for (const [id, n] of ev.burst) {
+        for (let i = 0; i < n; i++) this.spawnEnemyAt(id, ev.radius);
+      }
+      this.showWaveBanner(ev.label);
     }
 
     const phase = currentPhase(this.elapsed);
@@ -348,6 +399,17 @@ export class GameScene extends Phaser.Scene {
   private spawnEnemy(id: string): Enemy | null {
     const a = Math.random() * Math.PI * 2;
     const r = 760 + Math.random() * 220;
+    let x = this.player.x + Math.cos(a) * r;
+    let y = this.player.y + Math.sin(a) * r;
+    x = Phaser.Math.Clamp(x, 30, WORLD_W - 30);
+    y = Phaser.Math.Clamp(y, 30, WORLD_H - 30);
+    return this.enemies.spawn(id, x, y, this.elapsed);
+  }
+
+  // 指定半径环生成（波次事件用，比常规 760~980 更近，保证 10s 内进屏）
+  private spawnEnemyAt(id: string, radius: number): Enemy | null {
+    const a = Math.random() * Math.PI * 2;
+    const r = radius + Math.random() * 60;
     let x = this.player.x + Math.cos(a) * r;
     let y = this.player.y + Math.sin(a) * r;
     x = Phaser.Math.Clamp(x, 30, WORLD_W - 30);
@@ -594,6 +656,32 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // 波次/连杀横幅（独立于 Boss 横幅位，避免互相顶掉）
+  private showWaveBanner(text: string, color = '#9fe8ff'): void {
+    if (this.waveBannerText) this.waveBannerText.destroy();
+    this.waveBannerText = this.add.text(GAME_W / 2, 196, text, {
+      fontFamily: 'monospace', fontSize: '26px', color,
+      stroke: '#062033', strokeThickness: 5
+    }).setOrigin(0.5).setDepth(174).setScrollFactor(0).setAlpha(0);
+    this.tweens.add({
+      targets: this.waveBannerText,
+      alpha: 1, y: 186, duration: 180, ease: 'Cubic.easeOut',
+      yoyo: true, hold: 800,
+      onComplete: () => { this.waveBannerText?.destroy(); this.waveBannerText = null; }
+    });
+  }
+
+  // v0.10.0 顿帧：大事件(连杀里程碑/Boss击破)短暂放慢游戏时间制造"定格"手感；
+  // 用真实墙钟 setTimeout 恢复，不受游戏内时间缩放影响，绝不卡死。
+  private doHitStop(kind: 'milestone' | 'boss'): void {
+    const now = performance.now();
+    if (now < this.hitStopUntil) return;   // 已在顿帧中，不叠加
+    const spec = hitStopSpec(kind);
+    this.hitStopUntil = now + spec.ms;
+    this.hitStopScale = spec.scale;
+    setTimeout(() => { this.hitStopScale = 1; }, spec.ms);
+  }
+
   // 屏幕上方红色横幅（Boss 阶段/预警/击破）
   private showBossBanner(text: string, color: string): void {
     if (this.bossBannerText) this.bossBannerText.destroy();
@@ -613,6 +701,17 @@ export class GameScene extends Phaser.Scene {
     this.kills++;
     sfx.kill();
     vibrate(25);
+    // v0.10.0 击杀爆散：按敌人类型(鱼5/疾行5/肥鱼10/Boss30)池化粒子，克制数量保帧率
+    this.deathFx.burst(e.x, e.y, e.def.id);
+    // v0.10.0 连杀：3s 窗口累计，每 5 连杀一次里程碑（横幅+顿帧+轻震），鼓励连续击杀
+    const streakCount = this.streak.add();
+    if (this.streak.isMilestone(5)) {
+      const color = streakCount >= 20 ? '#ffd447' : streakCount >= 10 ? '#8ef0b8' : '#9fe8ff';
+      this.showWaveBanner(`${streakCount} 连杀！`, color);
+      this.doHitStop('milestone');
+      vibrate([40, 60, 40]);
+      this.cameras.main.shake(120, 0.006);
+    }
     this.drops.spawn(e.x, e.y, 'xp', e.xp);
     if (Math.random() < e.goldChance) this.drops.spawn(e.x, e.y, 'gold', 1);
     // 特殊掉落：极低概率的大白饭/饭盆（默认 1.5% / 0.35%，见 balance.ts）
@@ -647,6 +746,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.shake(320, 0.014);
     vibrate([120, 60, 120, 60]);
     sfx.evolve();
+    this.doHitStop('boss');
     this.showBossBanner('Boss 击破！', '#4de8c2');
     this.bossTeleG?.clear();
     this.bossBrain = null;
@@ -832,6 +932,9 @@ export class GameScene extends Phaser.Scene {
       gold: this.gold
     };
     // 展示胜负表情 1.1s 后再进结算场景
-    this.time.delayedCall(1100, () => this.scene.start('Result', data));
+    // v0.9.1: 改墙钟计时器（非 Phaser 游戏时钟）——低帧率/共享CPU下展示时长恒定约 1.1s 真实时间
+    this.finishTimer = createFinishTimer(RESULT_DELAY_MS);
+    this.finishTimer.start();
+    this.resultData = data;
   }
 }

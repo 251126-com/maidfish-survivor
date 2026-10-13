@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch({ executablePath:'/usr/bin/chromium', args:['--no-sandbox','--disable-dev-shm-usage','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader','--autoplay-policy=no-user-gesture-required'] });
+const page = await b.newPage({ viewport:{width:1280,height:720} });
+const errs=[]; page.on('pageerror',e=>errs.push(String(e).slice(0,200)));
+await page.goto('http://127.0.0.1:4173/', {waitUntil:'load', timeout:60000});
+await page.waitForTimeout(2000);
+const t0=await page.evaluate(()=>{ window.__game.scene.getScene('Menu').scene.start('Game'); return window.__game.renderer.type; });
+await page.waitForTimeout(6000);
+const r=await page.evaluate(()=>{ const g=window.__game,s=g.scene.getScene('Game'); return { fps:Math.round(g.loop.actualFps||0), enemies:s.enemies?.count, bullets:s.weapons?.bulletCount??0, drops:s.drops?.count??0, deathFx:s.deathFx?.visibleCount??0, kills:s.kills, elapsed:+s.elapsed.toFixed(1), renderer:g.renderer.type }; });
+console.log('RENDERER_INIT', t0, 'STATE', JSON.stringify(r), 'ERRS', JSON.stringify(errs));
+await b.close();

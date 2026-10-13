@@ -7,7 +7,7 @@ import { MenuScene } from './scenes/MenuScene.ts';
 import { GameScene } from './scenes/GameScene.ts';
 import { ResultScene } from './scenes/ResultScene.ts';
 import { sfx } from './core/audio.ts';
-import { toggleFullscreen, isFullscreen, uaKind, type FsRequest } from './core/fullscreen.ts';
+import { isFullscreen, uaKind, toggleFullscreen, requestFullscreenAsync, type FsRequest } from './core/fullscreen.ts';
 import { VERSION } from './config/version.ts';
 import { BG_ORDER, BG_SWITCH_SEC } from './config/background.ts';
 import { RICE_DROP_CHANCE, BOWL_DROP_CHANCE, RICE_HEAL, ARMOR_MAX } from './config/balance.ts';
@@ -72,6 +72,9 @@ dbg.__LOOT_MARK = {
 const refreshScale = () => game.scale.refresh();
 document.addEventListener('fullscreenchange', refreshScale);
 document.addEventListener('webkitfullscreenchange', refreshScale);
+// v0.9.1: 窗口 resize（含进出全屏后视口变化、桌面拖动窗口）也强制 refresh，
+// 确保 FIT 逻辑坐标映射始终一致（HUD/悬浮球按 1280x720 逻辑坐标，不改 CSS 像素换算）
+window.addEventListener('resize', refreshScale);
 
 // iOS 轻提示：临时 DOM toast（不干扰 Phaser，自动消失）
 let fsToastEl: HTMLDivElement | null = null;
@@ -97,13 +100,22 @@ window.addEventListener('keydown', unlockAudio, { once: true });
 
 // 全屏切换统一入口：供悬浮菜单按钮调用（返回结果给 UI 更新文案）
 const FS_KIND = uaKind(navigator.userAgent);
-(dbg as typeof dbg & { __FS?: { kind: string; toggle: () => FsRequest; isFullscreen: () => boolean } }).__FS = {
+(dbg as typeof dbg & { __FS?: { kind: string; toggle: () => Promise<FsRequest>; isFullscreen: () => boolean } }).__FS = {
   kind: FS_KIND,
   isFullscreen: () => isFullscreen(),
+  // v0.9.1: 异步等待 fullscreen 请求的真实结果——拒绝时 toast「全屏失败」；
+  // UI 按钮文案始终按实际 fullscreenElement 刷新（refreshLabels/fullscreenchange）
   toggle: () => {
-    const r = toggleFullscreen(document.getElementById('game'), FS_KIND);
-    if (r === 'unsupported') fsToast('iOS 不支持全屏，请用浏览器自带全屏');
-    else if (r === 'pending') fsToast('当前浏览器不支持全屏');
-    return r;
+    const el = document.getElementById('game');
+    if (isFullscreen()) {
+      toggleFullscreen(el, FS_KIND);   // 退出全屏
+      return Promise.resolve('ok' as FsRequest);
+    }
+    return requestFullscreenAsync(el, FS_KIND).then(r => {
+      if (r === 'unsupported') fsToast('iOS 不支持全屏，请用浏览器自带全屏');
+      else if (r === 'pending') fsToast('当前浏览器不支持全屏');
+      else if (r === 'failed') fsToast('全屏请求被拒绝，请检查浏览器权限');
+      return r;
+    });
   }
 };

@@ -11,10 +11,13 @@ import { META_TREE } from '../config/upgrades.ts';
 import { loadSave, writeSave } from '../core/save.ts';
 import { VERSION } from '../config/version.ts';
 
+// v0.9.1: 商店购买 scene.restart() 会重建实例，模块级变量跨实例保留用户选中的起始背景
+let lastBgPick: number | null = null;
+
 export class MenuScene extends Phaser.Scene {
   private goldText!: Phaser.GameObjects.Text;
-  /** 当前选择的起始背景下标（0..3），默认随机 */
-  private bgPick = randomStartIndex();
+  /** 当前选择的起始背景下标（0..3），默认随机；购买重载后沿用上次选择 */
+  private bgPick = lastBgPick ?? randomStartIndex();
   private bgCards: Phaser.GameObjects.Rectangle[] = [];
   private bgLabels: Phaser.GameObjects.Text[] = [];
   private bgImage!: Phaser.GameObjects.Image;
@@ -131,6 +134,7 @@ export class MenuScene extends Phaser.Scene {
   private pickBg(i: number): void {
     if (i < 0 || i >= BG_ORDER.length) return;
     this.bgPick = i;
+    lastBgPick = i;   // v0.9.1: 购买后 scene.restart() 不清空用户选择
     this.applyBg();
     for (let k = 0; k < this.bgCards.length; k++) {
       const sel = k === this.bgPick;
@@ -143,10 +147,16 @@ export class MenuScene extends Phaser.Scene {
   // 底图按当前选自换纹理 + cover 铺满 + 名字提示（在开始面板底部）
   private applyBg(): void {
     const phase = BG_ORDER[this.bgPick];
-    this.bgImage.setTexture(phase.key);
-    const src = this.textures.get(phase.key).getSourceImage();
-    const cover = coverFit(src.width, src.height, GAME_W, GAME_H);
-    this.bgImage.setDisplaySize(cover.w, cover.h);
+    // v0.9.2 失败兜底：背景贴图未加载成功时隐藏图片，露出深色底（不白屏、不抛错）
+    if (this.textures.exists(phase.key)) {
+      this.bgImage.setTexture(phase.key);
+      const src = this.textures.get(phase.key).getSourceImage();
+      const cover = coverFit(src.width, src.height, GAME_W, GAME_H);
+      this.bgImage.setDisplaySize(cover.w, cover.h);
+      this.bgImage.setVisible(true);
+    } else {
+      this.bgImage.setVisible(false);
+    }
     this.bgImage.setDepth(0);
     if (this.bgNameText) this.bgNameText.destroy();
     this.bgNameText = this.add.text(GAME_W / 2, 336, `起始：${phase.name}  ·  点击开始进入`, {

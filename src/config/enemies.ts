@@ -1,4 +1,5 @@
 // 敌人配置表：蓝色大肥鱼家族
+// v0.10.0: Boss 血量固定不随 elapsed 缩放（Boss 是节奏事件，不是刷怪），提前到 150s 时玩家仍有可击败性。
 export interface EnemyDef {
   id: string;
   name: string;
@@ -15,18 +16,18 @@ export interface EnemyDef {
 export const ENEMIES: Record<string, EnemyDef> = {
   fish: {
     id: 'fish', name: '小蓝鱼', texture: 'enemy_fish',
-    hp: 20, speed: 75, damage: 8, xp: 1, goldChance: 0.15, radius: 16, scale: 1
+    hp: 18, speed: 78, damage: 8, xp: 2, goldChance: 0.15, radius: 16, scale: 1
   },
   dart: {
     id: 'dart', name: '疾行鱼', texture: 'enemy_dart',
-    hp: 15, speed: 170, damage: 6, xp: 2, goldChance: 0.2, radius: 12, scale: 0.85
+    hp: 15, speed: 170, damage: 6, xp: 3, goldChance: 0.2, radius: 12, scale: 0.85
   },
   fat: {
     id: 'fat', name: '肥鱼', texture: 'enemy_fat',
-    hp: 70, speed: 48, damage: 15, xp: 5, goldChance: 0.5, radius: 26, scale: 1.4
+    hp: 60, speed: 50, damage: 15, xp: 7, goldChance: 0.5, radius: 26, scale: 1.4
   },
   boss: {
     id: 'boss', name: '蓝色大肥鱼王', texture: 'enemy_boss',
-    hp: 4000, speed: 42, damage: 25, xp: 100, goldChance: 1, radius: 60, scale: 3
+    hp: 2200, speed: 42, damage: 20, xp: 60, goldChance: 1, radius: 60, scale: 3
   }
 };
