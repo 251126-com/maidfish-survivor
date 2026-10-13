@@ -27,7 +27,7 @@ export interface SkillParams {
 }
 
 export interface BossEvent {
-  type: 'roar-start' | 'phase-change' | 'telegraph-start' | 'act-start' | 'act-end' | 'recover-start' | 'idle-start';
+  type: 'roar-start' | 'phase-change' | 'telegraph-start' | 'act-start' | 'act-end' | 'recover-start' | 'idle-start' | 'skill-cancel';
   skill?: BossSkillId;
   phase: number;
   params?: SkillParams;
@@ -63,6 +63,10 @@ export class BossBrain {
   lastSkill: BossSkillId | null = null;
   private dashDirX = 0;
   private dashDirY = 0;
+  // v0.9.1：dash 预警记录冻结的起点（telegraph 开始时的 Boss 位置），
+  // telegraph 期间 Boss 不移动（GameScene 冻结），act 沿用同一起点 → 预警线与实际路径一致
+  private dashFromX = 0;
+  private dashFromY = 0;
   private dashSpeed = 0;
   private telegraphDuration = 0;
   private actDuration = 0;
@@ -70,10 +74,13 @@ export class BossBrain {
   private lastTelegraphParams: SkillParams | null = null;
   private circleCache: { x: number; y: number; r: number }[] = [];
 
-  constructor(x: number, y: number, hpRatio: number) {
+  private rng: () => number;
+
+  constructor(x: number, y: number, hpRatio: number, rng: () => number = Math.random) {
     this.x = x;
     this.y = y;
     this.phase = bossPhaseFor(hpRatio);
+    this.rng = rng;
   }
 
   /** 推进一帧；返回本帧应触发的表现/伤害事件（纯逻辑，无副作用外） */
@@ -82,6 +89,14 @@ export class BossBrain {
     const phaseNow = bossPhaseFor(hpRatio);
     // 血量跨阈值（阶段号向上：P0→P1→P2）→ roar
     if (phaseNow > this.phase) {
+      const oldPhase = this.phase;
+      // v0.9.1：先判定当前技能是否在进行（此时 state 尚未改到 roar）
+      if (this.state === 'telegraph' || this.state === 'act') {
+        const canceled = this.skill;
+        this.lastTelegraphParams = null;
+        this.circleCache = [];
+        this.pendingEvents.push({ type: 'skill-cancel', skill: canceled, phase: oldPhase, hpRatio });
+      }
       this.phase = phaseNow;
       this.state = 'roar';
       this.stateT = 0;
@@ -125,7 +140,7 @@ export class BossBrain {
         ? ['dash', 'spread', 'circle', 'dash']
         : ['spread', 'spread', 'circle'];
     const cand = pool.filter(s => s !== this.lastSkill);
-    this.lastSkill = this.skill = cand[Math.floor(Math.random() * cand.length)];
+    this.lastSkill = this.skill = cand[Math.floor(this.rng() * cand.length)];
     return this.skill;
   }
 
@@ -141,10 +156,13 @@ export class BossBrain {
       this.dashDirX = dx / l;
       this.dashDirY = dy / l;
       this.dashSpeed = 500 + this.phase * 130;
+      // v0.9.1：冻结并记录预警起点（GameScene 在 dash telegraph 期间冻结 Boss 位置）
+      this.dashFromX = this.x;
+      this.dashFromY = this.y;
       params.dashDirX = this.dashDirX;
       params.dashDirY = this.dashDirY;
-      params.dashFromX = this.x;
-      params.dashFromY = this.y;
+      params.dashFromX = this.dashFromX;
+      params.dashFromY = this.dashFromY;
     } else if (skill === 'spread') {
       const a = Math.atan2(py - this.y, px - this.x);
       params.fanAngle = a;
@@ -154,8 +172,8 @@ export class BossBrain {
       const count = 1 + this.phase;
       const circles: { x: number; y: number; r: number }[] = [];
       for (let i = 0; i < count; i++) {
-        const ang = (i / count) * Math.PI * 2 + Math.random() * 0.8;
-        const rad = 90 + Math.random() * 130;
+        const ang = (i / count) * Math.PI * 2 + this.rng() * 0.8;
+        const rad = 90 + this.rng() * 130;
         circles.push({ x: px + Math.cos(ang) * rad, y: py + Math.sin(ang) * rad, r: 58 + this.phase * 8 });
       }
       // 第 0 个圈紧贴玩家当前位置（保证有威胁）
@@ -175,10 +193,13 @@ export class BossBrain {
     this.actDuration = act;
     const params: SkillParams = { duration: act };
     if (this.skill === 'dash') {
+      // v0.9.1：沿用 telegraph 记录的冻结起点（若 GameScene 未冻结，也强制拉回，保证路径一致）
+      this.x = this.dashFromX;
+      this.y = this.dashFromY;
       params.dashDirX = this.dashDirX;
       params.dashDirY = this.dashDirY;
-      params.dashFromX = this.x;
-      params.dashFromY = this.y;
+      params.dashFromX = this.dashFromX;
+      params.dashFromY = this.dashFromY;
     } else if (this.skill === 'spread') {
       params.fanAngle = Math.atan2(py - this.y, px - this.x);
       params.fanCount = 7 + this.phase * 2;

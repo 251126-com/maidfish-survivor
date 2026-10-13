@@ -14,7 +14,7 @@ import { vibrate } from '../core/vibration.ts';
 import { Player } from '../game/player.ts';
 import { EnemySystem, type Enemy } from '../game/enemySystem.ts';
 import { WeaponSystem } from '../game/weaponSystem.ts';
-import { EnemyBulletSystem } from '../game/enemyBullets.ts';
+import { EnemyBulletSystem, bulletHitsPlayer } from '../game/enemyBullets.ts';
 import { BossBrain, type BossEvent, type SkillParams } from '../game/bossBrain.ts';
 import { DropSystem, type LootKind } from '../game/dropSystem.ts';
 import { rollSpecialDrop } from '../game/collectibles.ts';
@@ -403,6 +403,15 @@ export class GameScene extends Phaser.Scene {
       brain.y = be.y;
     }
     const hpRatio = Phaser.Math.Clamp(be.hp / be.maxHp, 0, 1);
+    // v0.9.1：dash 预警期间冻结 Boss 位置在预警起点（否则敌人追踪漂移 → 预警线与实际路径错位）
+    if (brain.state === 'telegraph' && brain.currentSkill === 'dash') {
+      const t = brain.telegraphParams;
+      if (t && t.dashFromX !== undefined && t.dashFromY !== undefined) {
+        be.x = t.dashFromX;
+        be.y = t.dashFromY;
+        be.sprite.setPosition(be.x, be.y);
+      }
+    }
     const events = brain.step(dt, hpRatio, this.player.x, this.player.y);
     // 冲刺时把脑内位移写回敌人
     if (brain.dashing) {
@@ -428,6 +437,12 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'roar-start':
         // 咆哮期间霸体脉冲由 drawBossTelegraph 画（红圈呼吸）
+        break;
+      case 'skill-cancel':
+        // v0.9.1：跨阶段打断技能 → 清掉预警（不残留误导红圈/直线），并给明确反馈；
+        // 不触发 act-end，因此不补无预警爆炸。
+        this.bossTeleG?.clear();
+        this.showCancelFeedback(be.x, be.y);
         break;
       case 'telegraph-start': {
         const names: Record<string, string> = { dash: '预警：冲刺！', spread: '预警：扇弹！', circle: '预警：红圈！' };
@@ -547,24 +562,35 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // Boss 弹幕与玩家碰撞
+  // Boss 弹幕与玩家碰撞（v0.9.1：改用 bulletHitsPlayer → active 守卫，死弹不伤害；命中一次即回收）
   private collideEnemyBullets(): void {
     const bs = this.enemyBullets?.live;
     if (!bs) return;
+    const px = this.player.x;
+    const py = this.player.y;
+    const pr = this.player.radius;
     for (let i = 0; i < bs.length; i++) {
       const b = bs[i];
-      const rr = b.radius + this.player.radius;
-      const dx = b.x - this.player.x;
-      const dy = b.y - this.player.y;
-      if (dx * dx + dy * dy <= rr * rr) {
-        if (this.player.takeDamage(b.damage, b.x, b.y)) {
-          sfx.hurt();
-          vibrate([60, 40, 60]);
-          this.flashHurt();
-        }
-        this.enemyBullets!.pool.release(b);
+      if (!bulletHitsPlayer(b, px, py, pr)) continue;
+      if (this.player.takeDamage(b.damage, b.x, b.y)) {
+        sfx.hurt();
+        vibrate([60, 40, 60]);
+        this.flashHurt();
       }
+      this.enemyBullets!.pool.release(b);
     }
+  }
+
+  // 技能被打断的明确反馈：Boss 头顶浮出文字并淡出
+  private showCancelFeedback(x: number, y: number): void {
+    const t = this.add.text(x, y - 130, '☠ 技能被打断！', {
+      fontFamily: 'monospace', fontSize: '20px', color: '#ffd447',
+      stroke: '#062033', strokeThickness: 4
+    }).setOrigin(0.5).setDepth(96);
+    this.tweens.add({
+      targets: t, y: t.y - 40, alpha: 0, duration: 900, ease: 'Cubic.easeOut',
+      onComplete: () => t.destroy()
+    });
   }
 
   // 屏幕上方红色横幅（Boss 阶段/预警/击破）
