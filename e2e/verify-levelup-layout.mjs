@@ -47,10 +47,12 @@ async function waitSettled(page, timeoutMs = 6000) {
   for (;;) {
     const info = await geoms(page);
     const settled = info.cards.length > 0 && info.cards.every((c) => {
-      return Math.abs(c.actual.kind - c.expect.kindY) < 0.05 &&
-             Math.abs(c.actual.name - c.expect.nameY) < 0.05 &&
-             Math.abs(c.actual.desc - c.expect.descY) < 0.05 &&
-             Math.abs(c.card.cy - c.expect.cy) < 0.05;
+      // 收敛阈值必须严于后续断言(0.001)：只有真正静止在基准 y 才算稳定，
+      // 否则 tween 从 0.05 收敛到 0.001 的窗口期内会误报失败（见 92 竖屏长中文 flake）
+      return Math.abs(c.actual.kind - c.expect.kindY) < 0.0005 &&
+             Math.abs(c.actual.name - c.expect.nameY) < 0.0005 &&
+             Math.abs(c.actual.desc - c.expect.descY) < 0.0005 &&
+             Math.abs(c.card.cy - c.expect.cy) < 0.0005;
     });
     if (settled) return { ok: true, info };
     if (Date.now() > deadline) return { ok: false, info };
@@ -60,10 +62,12 @@ async function waitSettled(page, timeoutMs = 6000) {
 
 
 // 注入"长中文"升级选项：覆盖用户截图场景（真实滚到的短文案外，还要保证长文案不叠印/不越界）
+// v0.7.1：加入"无空格纯中文"极值（历史上 Phaser wordWrap 对无空格中文整段不折行、
+//   desc 横排到 675px 远超 maxW≈280 的缺陷入参），覆盖混合空格短句两种形态。
 const LONG_OPTS = [
-  { kind: 'evolution', id: 'railgun', name: '大肥鱼磁暴轨道歼星炮改三型', desc: '进化：穿透一切，射速拉满，并且获得额外的暴击率加成与更远的射程，再加一层鲸鱼护盾叠满更持久' },
-  { kind: 'weapon_level', id: 'sniper', name: '大肥鱼狙击枪 Lv.5 终级形态完全解放', desc: '高伤慢速，贯穿一排并附带小型爆炸，对密集敌群造成范围伤害，代价是换弹时间略长' },
-  { kind: 'passive', id: 'scope', name: '超长名字：女仆头饰瞄准镜终极进化再进化', desc: '伤害 +8% 且经验 +10%，同时扩大拾取范围，每级再额外叠加 2% 的暴击与 1% 移速，越叠越强' }
+  { kind: 'evolution', id: 'railgun', name: '大肥鱼磁暴轨道歼星炮改三型', desc: '进化穿透一切射速拉满并且获得额外的暴击率加成与更远的射程再加一层鲸鱼护盾叠满更持久更高' },
+  { kind: 'weapon_level', id: 'sniper', name: '大肥鱼狙击枪终级形态完全解放完全体', desc: '高伤慢速贯穿一排并附带小型爆炸对密集敌群造成范围伤害代价是换弹时间略长' },
+  { kind: 'passive', id: 'scope', name: '超长名字女仆头饰瞄准镜终极进化再进化', desc: '伤害 +8% 且经验 +10%，同时扩大拾取范围，每级再额外叠加 2% 的暴击与 1% 移速，越叠越强' }
 ];
 
 async function injectLongCn(page, label) {
@@ -84,12 +88,47 @@ async function injectLongCn(page, label) {
     const nameBottom = c.actual.name + c.actual.nameH / 2;
     const descTop = c.actual.desc - c.actual.descH / 2;
     const descBottom = c.actual.desc + c.actual.descH / 2;
-    // 2) 不越卡片边界
-    const zonesOk = c.actual.nameH <= c.zone.nameMaxH + 0.01 && c.actual.descH <= c.zone.descMaxH + 0.01;
+    // 2) 不越卡片边界 + 每行宽不超分区宽（v0.7.1 根因回归：Phaser wordWrap 对无空格纯中文不折行）
+    const zonesOk = c.actual.nameH <= c.zone.nameMaxH + 0.01 && c.actual.descH <= c.zone.descMaxH + 0.01 &&
+                    c.actual.nameW <= c.zone.nameMaxW + 1 && c.actual.descW <= c.zone.descMaxW + 1;
     const orderOk = nameTop >= top && nameBottom <= bottom && descTop >= nameBottom - 0.01 && descBottom <= bottom + 0.01;
     return kindsOk && namesOk && descsOk && zonesOk && orderOk;
   });
   await page.screenshot({ path: `${OUT}/${label}-longcn.png` });
+  return { ok, info };
+}
+
+// 纯中文无空格长描述（v0.8.0 根因最极端复现：Phaser wordWrap 无空格绝不折行）
+const PURE_CN_OPTS = [
+  { kind: 'evolution', id: 'railgun', name: '大肥鱼磁暴轨道歼星炮改三型终极形态完全解放', desc: '进化！穿透一切！射速拉满！获得额外暴击率加成与更远的射程，再加一层鲸鱼护盾，叠满更持久，全中文无空格绝不换行的极端用例' },
+  { kind: 'weapon_level', id: 'sniper', name: '大肥鱼狙击枪终级形态完全解放', desc: '高伤慢速贯穿一排附带小型爆炸对密集敌群造成范围伤害代价是换弹时间略长' },
+  { kind: 'passive', id: 'scope', name: '女仆头饰瞄准镜终极进化再进化', desc: '伤害提升且经验增加同时扩大拾取范围每级再额外叠加暴击与移速越叠越强' }
+];
+
+async function injectPureCn(page, label) {
+  await page.evaluate((opts) => {
+    const s = window.__game.scene.getScene('Game');
+    s.panel.show(opts, () => {});
+  }, PURE_CN_OPTS.map(o => ({ ...o })));
+  const settled = await waitSettled(page);
+  const info = settled.info;
+  const ok = info.cards.length === 3 && info.cards.every((c) => {
+    const z = c.zone;
+    const top = c.card.cy - c.card.h / 2;
+    const bottom = c.card.cy + c.card.h / 2;
+    const nameTop = c.actual.name - c.actual.nameH / 2;
+    const nameBottom = c.actual.name + c.actual.nameH / 2;
+    const descTop = c.actual.desc - c.actual.descH / 2;
+    const descBottom = c.actual.desc + c.actual.descH / 2;
+    const widthOk = c.actual.nameW <= z.nameMaxW + 1 && c.actual.descW <= z.descMaxW + 1;
+    const heightOk = c.actual.nameH <= z.nameMaxH + 0.01 && c.actual.descH <= z.descMaxH + 0.01;
+    const posOk = Math.abs(c.actual.kind - c.expect.kindY) < 0.001 &&
+                  Math.abs(c.actual.name - c.expect.nameY) < 0.001 &&
+                  Math.abs(c.actual.desc - c.expect.descY) < 0.001;
+    const orderOk = nameTop >= top && nameBottom <= bottom && descTop >= nameBottom - 0.01 && descBottom <= bottom + 0.01;
+    return widthOk && heightOk && posOk && orderOk;
+  });
+  await page.screenshot({ path: `${OUT}/${label}-purecn.png` });
   return { ok, info };
 }
 
@@ -135,13 +174,15 @@ async function runViewport(ctx, vp, label) {
     ),
     info.cards.map(c => `bg=${c.card.cy.toFixed(0)}/${c.expect.cy} k=${c.actual.kind.toFixed(0)}/${c.expect.kindY} n=${c.actual.name.toFixed(0)}/${c.expect.nameY} d=${c.actual.desc.toFixed(0)}/${c.expect.descY}`).join(' | '));
 
-  // 文字不溢出：文字高度 <= 分区高度；文字带在卡片内
-  check(`${label}: 名称/描述文字不溢出分区`,
+  // 文字不溢出：高度 <= 分区高 AND 宽度 <= 分区宽（v0.7.1 根因回归：无空格纯中文横排溢出）
+  check(`${label}: 名称/描述文字不溢出分区（高+宽）`,
     info.cards.every(c =>
       c.actual.nameH <= c.zone.nameMaxH + 0.01 &&
-      c.actual.descH <= c.zone.descMaxH + 0.01
+      c.actual.descH <= c.zone.descMaxH + 0.01 &&
+      c.actual.nameW <= c.zone.nameMaxW + 1 &&
+      c.actual.descW <= c.zone.descMaxW + 1
     ),
-    info.cards.map(c => `name ${c.actual.nameH.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)} desc ${c.actual.descH.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}`).join(' | '));
+    info.cards.map(c => `name ${c.actual.nameH.toFixed(0)}x${c.actual.nameW.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)}x${c.zone.nameMaxW.toFixed(0)} desc ${c.actual.descH.toFixed(0)}x${c.actual.descW.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}x${c.zone.descMaxW.toFixed(0)}`).join(' | '));
   check(`${label}: 名称/描述文字带不越卡片边界`,
     info.cards.every(c => {
       const top = c.card.cy - c.card.h / 2;
@@ -153,6 +194,15 @@ async function runViewport(ctx, vp, label) {
       return nameTop >= top && nameBottom <= bottom && descTop >= nameBottom && descBottom <= bottom;
     }),
     info.cards.map(c => `name[${(c.actual.name - c.actual.nameH / 2).toFixed(0)},${(c.actual.name + c.actual.nameH / 2).toFixed(0)}] desc[${(c.actual.desc - c.actual.descH / 2).toFixed(0)},${(c.actual.desc + c.actual.descH / 2).toFixed(0)}] card[${(c.card.cy - c.card.h / 2).toFixed(0)},${(c.card.cy + c.card.h / 2).toFixed(0)}]`).join(' | '));
+
+  // v0.7.1：name 文本带与 desc 文本带互不重叠（文字高度后仍保持分区隔离）
+  check(`${label}: name/desc 文字带无重叠`,
+    info.cards.every(c => {
+      const nameBottom = c.actual.name + c.actual.nameH / 2;
+      const descTop = c.actual.desc - c.actual.descH / 2;
+      return descTop >= nameBottom - 0.01;
+    }),
+    info.cards.map(c => `nameBottom=${(c.actual.name + c.actual.nameH / 2).toFixed(1)} descTop=${(c.actual.desc - c.actual.descH / 2).toFixed(1)} gap=${(c.actual.desc - c.actual.descH / 2 - c.actual.name - c.actual.nameH / 2).toFixed(1)}`).join(' | '));
 
   // 三卡点击区域：卡片矩形互不交叠且全部在画布内
   check(`${label}: 三卡点击区域稳定且互不遮挡、不出屏`,
@@ -181,6 +231,11 @@ async function runViewport(ctx, vp, label) {
   const longOut = await injectLongCn(page, label);
   check(`${label}: 长中文 kind/name/desc 各归其位、不越界不交叠（含缩字）`, longOut.ok,
     longOut.info.cards.map(c => `k=${c.actual.kind.toFixed(0)}/${c.expect.kindY.toFixed(0)} n=${c.actual.name.toFixed(0)}/${c.expect.nameY.toFixed(0)} d=${c.actual.desc.toFixed(0)}/${c.expect.descY.toFixed(0)} nameH=${c.actual.nameH.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)} descH=${c.actual.descH.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}`).join(' | '));
+
+  // 纯中文无空格长描述（根因最极端复现：必须逐字符折行）
+  const pureOut = await injectPureCn(page, label);
+  check(`${label}: 纯中文无空格长描述不越宽/不越界/不交叠`, pureOut.ok,
+    pureOut.info.cards.map(c => `nameW=${c.actual.nameW.toFixed(0)}/${c.zone.nameMaxW.toFixed(0)} descW=${c.actual.descW.toFixed(0)}/${c.zone.descMaxW.toFixed(0)} nameH=${c.actual.nameH.toFixed(0)}/${c.zone.nameMaxH.toFixed(0)} descH=${c.actual.descH.toFixed(0)}/${c.zone.descMaxH.toFixed(0)}`).join(' | '));
   await page.evaluate(() => { const s = window.__game.scene.getScene('Game'); s.panel.hide(); });
   await page.waitForTimeout(300);
   await page.close();

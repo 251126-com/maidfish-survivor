@@ -41,3 +41,10 @@ export function hpScale(elapsedSec: number): number {
 export function speedScale(elapsedSec: number): number {
   return Math.min(1.5, 1 + (elapsedSec / 60) * 0.03);
 }
+
+// ---- 特殊掉落（大白饭/饭盆）----
+// 常量可调：默认极小概率。饭 1.5%，饭盆 0.35%（比金币掉落还稀有）。
+export const RICE_DROP_CHANCE = 0.015;    // 打怪掉大白饭概率
+export const BOWL_DROP_CHANCE = 0.0035;   // 打怪掉饭盆概率（更稀有）
+export const RICE_HEAL = 20;              // 拾取大白饭回复生命
+export const ARMOR_MAX = 30;              // 饭盆护甲上限/耐久

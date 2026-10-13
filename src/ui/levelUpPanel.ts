@@ -7,9 +7,15 @@
 //  - 本版本：每个对象用独立 tween 归位到自己的基准 y（无数组语义歧义），
 //    并由纯布局层 panelLayout 提供纵向分区（kind/name/desc），运行时用
 //    Phaser 真实 canvas 度量对名称/描述自适应换行缩字，保证不越界、不交叠。
+//
+// v0.7.1 根因修复（无空格纯中文横向溢出）：
+//  - Phaser basicWordWrap 只按空格拆词，无空格纯中文整串是首词且 `if (j>0)` 永不成立
+//    → 永不换行，desc 一行横排到 ~675px（maxW≈280）；旧 fitTextToZone 只缩字号不换行。
+//  - 本版本：真实 canvas measureText 逐字符折行 + pickLargestFit 缩字号 + 超区截断省略号，
+//    显式 \n 交给 Phaser 并关闭其 wordWrap，保证每行宽 <= maxW、总高 <= maxH。
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../config/balance.ts';
-import { computeCardLayout, type PanelLayout, type CardBox } from './panelLayout.ts';
+import { computeCardLayout, fitTextLines, type PanelLayout, type CardBox } from './panelLayout.ts';
 import type { UpgradeOption } from '../game/levelUp.ts';
 
 const KIND_LABEL: Record<string, string> = {
@@ -27,9 +33,10 @@ const KIND_COLOR: Record<string, number> = {
   evolution: 0xffb020      // 进化用金边，一眼能认出来
 };
 
-// 名称/描述的起始字号与最小字号（over fit 后仍由运行时 canvas 度量兜底）
-const NAME_FONT = { start: 22, min: 15 };
-const DESC_FONT = { start: 15, min: 11 };
+// 名称/描述的起始字号；硬最小字号用于病态超长文本截断（跌破首选字号仍放不下时）
+const NAME_FONT = { start: 22 };
+const DESC_FONT = { start: 15 };
+const TEXT_HARD_FLOOR = 6;   // 与 panelLayout fitTextStyle 硬底一致
 
 interface CardView {
   bg: Phaser.GameObjects.Rectangle;
@@ -42,6 +49,9 @@ interface CardView {
 
 export class LevelUpPanel {
   private scene: Phaser.Scene;
+  // 真实 canvas measureText 度量上下文（与 Phaser Text 同一 monospace 字体栈），
+  // 供 fitTextLines 逐字符折行/缩字/截断，保证每行宽 <= maxW。
+  private measureCtx: CanvasRenderingContext2D;
   private overlay: Phaser.GameObjects.Rectangle;
   private title: Phaser.GameObjects.Text;
   private cards: CardView[] = [];
@@ -52,6 +62,11 @@ export class LevelUpPanel {
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.layout = computeCardLayout(GAME_W, GAME_H, 3);
+
+    // 运行时用真实 canvas measureText 度量：不依赖 Phaser wordWrap（其对无空格纯中文不换行）
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) throw new Error('cannot get 2d context for text measuring');
+    this.measureCtx = ctx;
 
     this.overlay = scene.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x000000, 0.72)
       .setDepth(200).setScrollFactor(0).setInteractive();   // 吞掉点击，防止误触游戏
@@ -97,23 +112,24 @@ export class LevelUpPanel {
     this.setVisible(false);
   }
 
-  // 把文本放进 maxW x maxH 区域：用 Phaser 真实 canvas 度量 setText 后的宽高，
-  // 放不下就逐字号缩小，保证不溢出（比纯估算可靠，兼容任意设备字体回退）。
+  // 把文本放进 maxW x maxH 区域：真实 canvas 逐字符折行（wrapByChar）+ 缩字号 + 超区截断省略号。
+  // 显式 \n 交给 Phaser 并关闭其 wordWrap（防止二次折行/空格补偿），
+  // 保证每行宽 <= maxW（text.width <= maxW）、行数*行高 <= maxH（text.height <= maxH）。
   private fitTextToZone(
     t: Phaser.GameObjects.Text,
     text: string,
     maxW: number,
     maxH: number,
     start: number,
-    min: number
+    hardFloor: number
   ): void {
-    let fs = start;
-    for (;;) {
-      t.setStyle({ fontSize: `${fs}px`, wordWrap: { width: maxW } });
-      t.setText(text);
-      if (t.height <= maxH + 0.01 || fs <= min) break;
-      fs--;
-    }
+    const r = fitTextLines(text, maxW, maxH, start, 11, hardFloor, (fs, s) => {
+      this.measureCtx.font = `${fs}px monospace`;
+      return this.measureCtx.measureText(s).width;
+    });
+    t.setStyle({ fontSize: `${r.fontSize}px` });
+    t.setWordWrapWidth(null);            // 已显式折行，关闭 Phaser 二次 wrap
+    t.setText(r.lines.join('\n'));
   }
 
   private setCardAlpha(c: CardView, a: number): void {
@@ -150,9 +166,9 @@ export class LevelUpPanel {
       const z = c.base.zone;
       c.kind.setText(KIND_LABEL[o.kind] ?? '');
       // 名称：在 name 分区内自适应换行/缩字，绝不压到 kind 或 desc
-      this.fitTextToZone(c.name, o.name, z.nameMaxW, z.nameMaxH, NAME_FONT.start, NAME_FONT.min);
+      this.fitTextToZone(c.name, o.name, z.nameMaxW, z.nameMaxH, NAME_FONT.start, TEXT_HARD_FLOOR);
       // 描述：在 desc 分区内自适应换行/缩字，绝不溢出卡片
-      this.fitTextToZone(c.desc, o.desc, z.descMaxW, z.descMaxH, DESC_FONT.start, DESC_FONT.min);
+      this.fitTextToZone(c.desc, o.desc, z.descMaxW, z.descMaxH, DESC_FONT.start, TEXT_HARD_FLOOR);
       c.bg.setStrokeStyle(3, KIND_COLOR[o.kind] ?? 0x3d6c9e);
     }
     this.title.setVisible(true);

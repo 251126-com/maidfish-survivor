@@ -62,3 +62,22 @@ test('metaBonus 按等级换算加成', () => {
   assert.equal(Math.round(b.critChance * 100), 2);    // 1*0.02
   assert.equal(Math.round(b.xpMult * 100), 110);      // 1 + 2*0.05
 });
+test('旧存档兼容：只含金币的旧档正常加载且不新增局内字段', () => {
+  store.clear();
+  store.set('maidfish-survivor-save-v1', JSON.stringify({ gold: 100 }));
+  const s = loadSave();
+  assert.equal(s.gold, 100);
+  assert.ok(!('armor' in s), '旧档不应被注入护甲字段');
+  assert.ok(!('rice' in s), '旧档不应被注入饭字段');
+});
+
+test('写入新档不污染旧版本结构（不含局内护甲/饭盆）', () => {
+  store.clear();
+  const s = loadSave();
+  s.gold = 10;
+  writeSave(s);
+  const raw = store.get('maidfish-survivor-save-v1')!;
+  assert.ok(!raw.includes('armor'));
+  assert.ok(!raw.includes('rice'));
+  assert.ok(!raw.includes('bowl'));
+});

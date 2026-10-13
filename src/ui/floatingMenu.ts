@@ -13,6 +13,8 @@ export interface FloatingMenuOptions {
   setPaused: (v: boolean, showOverlay?: boolean) => void;
   restart: () => void;
   toMenu: () => void;
+  /** 场景切换：切到下一张授权背景（面板保持打开，可连续预览） */
+  nextBg: () => void;
 }
 
 interface ItemView {
@@ -153,6 +155,12 @@ export class FloatingMenu {
       case 'resume':
         this.close();
         this.opts.setPaused(false);            // 继续游戏
+        break;
+      case 'bg':
+        // 场景切换：面板保持打开，便于连续预览四张背景；同时给出轻震反馈
+        this.opts.nextBg();
+        vibrate(12);
+        this.refreshLabels();
         break;
       case 'sound':
         sfx.setEnabled(!sfx.enabled);

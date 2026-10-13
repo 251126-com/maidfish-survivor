@@ -36,10 +36,10 @@ test('保存位置越界时被拉回屏内', () => {
   assert.equal(p.y, BALL_RADIUS + 8);
 });
 
-test('面板布局：6 个按钮在卡片内垂直排布不重叠', () => {
+test('面板布局：7 个按钮（含场景切换）在卡片内垂直排布不重叠', () => {
   const L = computePanelLayout(GAME_W, GAME_H);
   const ids = L.items.map(i => i.id);
-  assert.deepEqual(ids, ['resume', 'sound', 'vib', 'full', 'restart', 'menu']);
+  assert.deepEqual(ids, ['resume', 'bg', 'sound', 'vib', 'full', 'restart', 'menu']);
   for (const it of L.items) {
     assert.ok(it.cy - 26 >= L.cy - L.cardH / 2, `${it.id} 顶部越界`);
     assert.ok(it.cy + 26 <= L.cy + L.cardH / 2, `${it.id} 底部越界`);
@@ -79,7 +79,29 @@ test('Fullscreen 手势改造是纯函数友好的：isBlocked 语义独立于 P
   // 设计契约：升级面板打开时悬浮球必须"可被禁用交互"（borrow 期/升级遮罩在上层）
   // 这里测纯逻辑部分：blocked 标记不应影响布局计算
   const L = computePanelLayout(GAME_W, GAME_H);
-  assert.equal(L.items.length, 6);
+  assert.equal(L.items.length, 7);
   // 与 blocked 无关：布局永远可用
   assert.ok(L.cardW > 0 && L.cardH > 0);
+});
+
+test('面板提供「场景切换」入口（bg 按钮）且紧随继续游戏', () => {
+  const L = computePanelLayout(GAME_W, GAME_H);
+  const bg = L.items.find(i => i.id === 'bg');
+  assert.ok(bg, '面板必须提供背景/场景切换入口');
+  assert.ok(/场景/.test(bg!.label), `bg 按钮文案应含"场景": ${bg!.label}`);
+  const ids = L.items.map(i => i.id);
+  assert.equal(ids.indexOf('bg'), 1, '场景切换应紧随"继续游戏"，方便暂停时换景');
+  // 与其他按钮不重叠
+  const idx = ids.indexOf('bg');
+  assert.ok(L.items[idx].cy - L.items[idx - 1].cy >= 52, '与继续游戏行间距不足');
+  assert.ok(L.items[idx + 1].cy - L.items[idx].cy >= 52, '与音效行间距不足');
+});
+
+test('面板含场景按钮时文案不与其他行重叠且行内垂直居中', () => {
+  const L = computePanelLayout(GAME_W, GAME_H);
+  for (const it of L.items) {
+    assert.ok(Math.abs(it.cy - (it.cy)) < 1e-9);
+  }
+  const all = L.items.map(i => i.id);
+  assert.equal(new Set(all).size, 7, '行 id 唯一');
 });

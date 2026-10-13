@@ -27,7 +27,7 @@ await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 
 const ver = await page.evaluate(() => window.__VERSION ?? null);
-check('版本标记 __VERSION=0.5.0', ver === '0.5.1', `实际 ${ver}`);
+check('版本标记 __VERSION=0.8.0', ver === '0.8.0', `实际 ${ver}`);
 log('  版本标记:', ver);
 
 // 进入游戏
@@ -340,7 +340,7 @@ mp.on('pageerror', e => errors.push(`[mobile pageerror] ${e.message}`));
 await mp.goto(URL, { waitUntil: 'load' });
 await mp.waitForTimeout(1400);
 const mVer = await mp.evaluate(() => window.__VERSION ?? null);
-check('手机端版本标记 0.5.0', mVer === '0.5.1', `实际 ${mVer}`);
+check('手机端版本标记 0.5.0', mVer === '0.8.0', `实际 ${mVer}`);
 const map = async (lx, ly) => {
   const box = await mp.locator('canvas').first().boundingBox();
   return { x: box.x + (lx / 1280) * box.width, y: box.y + (ly / 720) * box.height };

@@ -2,9 +2,11 @@
 // 顺序：输入 → 玩家移动 → 敌人更新 → 武器开火/碰撞 → 掉落 → 刷怪 → 升级 → 结算
 import Phaser from 'phaser';
 import {
-  WORLD_W, WORLD_H, GAME_W, GAME_H, PLAYER_BASE, GAME_DURATION, BOSS_TIME
+  WORLD_W, WORLD_H, GAME_W, GAME_H, PLAYER_BASE, GAME_DURATION, BOSS_TIME,
+  RICE_HEAL, ARMOR_MAX
 } from '../config/balance.ts';
 import { currentPhase, pickEnemy } from '../config/timeline.ts';
+import { BG_ORDER, randomStartIndex } from '../config/background.ts';
 import { BUFF_POOL, PASSIVES, type PlayerStats } from '../config/upgrades.ts';
 import { loadSave, writeSave, metaBonus } from '../core/save.ts';
 import { sfx } from '../core/audio.ts';
@@ -12,8 +14,10 @@ import { vibrate } from '../core/vibration.ts';
 import { Player } from '../game/player.ts';
 import { EnemySystem, type Enemy } from '../game/enemySystem.ts';
 import { WeaponSystem } from '../game/weaponSystem.ts';
-import { DropSystem } from '../game/dropSystem.ts';
+import { DropSystem, type LootKind } from '../game/dropSystem.ts';
+import { rollSpecialDrop } from '../game/collectibles.ts';
 import { InputSystem } from '../game/inputSystem.ts';
+import { BackgroundLayer } from '../game/backgroundLayer.ts';
 import { LevelSystem, rollUpgradeOptions, type UpgradeOption } from '../game/levelUp.ts';
 import { shakeForEvent } from '../game/feel.ts';
 import { Hud } from '../ui/hud.ts';
@@ -41,7 +45,11 @@ export class GameScene extends Phaser.Scene {
   private touchHint: Phaser.GameObjects.Text | null = null;
   private touchHintDone = false;
   private levelSys!: LevelSystem;
-  private bg!: Phaser.GameObjects.TileSprite;
+  /** 固定屏幕背景层：按周期切换四张授权背景 */
+  private bgLayer!: BackgroundLayer;
+  /** 本局起始背景下标（菜单选关或随机） */
+  private bgStartIndex = 0;
+  private bgToast: Phaser.GameObjects.Text | null = null;
 
   private stats!: PlayerStats;
   private passives: Record<string, number> = {};   // 被动道具等级（进化钥匙）
@@ -56,6 +64,14 @@ export class GameScene extends Phaser.Scene {
   private pauseLabel: Phaser.GameObjects.Text | null = null;
 
   constructor() { super('Game'); }
+
+  init(data: { bgStart?: number }): void {
+    // 起始背景：菜单选关(bgStart)优先，否则正常玩法随机轮换
+    let start = -1;
+    if (data && typeof data.bgStart === 'number') start = data.bgStart;
+    if (start < 0 || start >= BG_ORDER.length) start = randomStartIndex();
+    this.bgStartIndex = start;
+  }
 
   create(): void {
     this.elapsed = 0;
@@ -73,13 +89,14 @@ export class GameScene extends Phaser.Scene {
     this.input.once('pointerdown', unlock);
     this.input.keyboard?.once('keydown', unlock);
 
-    // 背景：屏幕大小的滚动瓦片（跟随相机偏移）
-    // 注意：不要用 4000x4000 的世界尺寸 TileSprite —— 那会创建超大渲染纹理，
-    // 实测在无头/低端设备上把帧率压到 11fps。屏幕大小 + setTilePosition 才是正解。
-    this.bg = this.add.tileSprite(0, 0, GAME_W, GAME_H, 'bg_tile')
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(0);
+    // 背景：四张授权背景按周期切换的固定屏幕层（scrollFactor 0）。
+    // 内部自带统一暗色遮罩（depth 2），压低背景亮度保证角色/弹幕/敌人/HUD 可读。
+    this.bgLayer = new BackgroundLayer(this, this.bgStartIndex);
+    this.bgLayer.onSwitch = (key, name) => {
+      this.showBgToast(name);
+      this.hud?.setBgName(name);
+    };
+    this.syncBgState();
 
     // 世界边界（只画 4 条线，开销可忽略）
     const border = this.add.graphics().setDepth(1);
@@ -116,9 +133,19 @@ export class GameScene extends Phaser.Scene {
       if (kind === 'xp') {
         this.levelSys.addXp(value, this.stats.xpMult);
         sfx.pickup();
-      } else {
+      } else if (kind === 'gold') {
         this.gold += value;
         sfx.coin();
+      } else if (kind === 'rice') {
+        // 大白饭：回血并钳制到最大 HP，给出实际回复量反馈
+        const healed = this.player.heal(RICE_HEAL);
+        sfx.pickup();
+        this.showPickupFeedback(`+${Math.round(healed)} 生命`, 0x7fe8a0);
+      } else if (kind === 'bowl') {
+        // 饭盆：获得/刷新 30 护甲；已满则提示（不叠加超上限）
+        const st = this.player.gainArmor();
+        sfx.pickup();
+        this.showPickupFeedback(st === 'full' ? '护甲已满' : '护甲 +30', 0x6fb8ff);
       }
     };
 
@@ -130,11 +157,23 @@ export class GameScene extends Phaser.Scene {
       getPaused: () => this.paused,
       setPaused: (v: boolean, showOverlay = true) => this.setPaused(v, showOverlay),
       restart: () => this.scene.start('Game'),
-      toMenu: () => this.scene.start('Menu')
+      toMenu: () => this.scene.start('Menu'),
+      nextBg: () => {
+        // 悬浮面板暂停态换景：直接切，交叉淡入淡出 tween 照常播放
+        this.bgLayer.next(this.elapsed);
+        this.hud?.setBgName(this.bgLayer.activeName);
+      }
     });
+    this.hud.setBgName(this.bgLayer.activeName);
 
     // 暂停/恢复：HUD 按钮 + 键盘（P / Esc）。悬浮面板打开期间由面板自身接管暂停，避免抢切
     this.paused = false;
+    this.hud.onBgNext = () => {
+      // 悬浮面板打开 / 暂停遮罩 / 升级面板期间不响应，避免与遮罩交互抢切
+      if (this.floatMenu.isOpen || this.paused || this.panel.visible) return;
+      this.bgLayer.next(this.elapsed);
+      this.hud.setBgName(this.bgLayer.activeName);
+    };
     this.hud.onPauseToggle = () => {
       if (this.floatMenu.isOpen) return;
       this.togglePause();
@@ -159,6 +198,7 @@ export class GameScene extends Phaser.Scene {
 
     // 场景退出时解绑输入监听，避免重复绑定
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.bgLayer.destroy();
       this.inputSys.destroy();
       this.hud.destroy();
       this.panel.destroy();
@@ -186,9 +226,9 @@ export class GameScene extends Phaser.Scene {
     const dt = Math.min(delta / 1000, 0.05);
     this.elapsed += dt;
 
-    // 背景滚动：用相机偏移驱动瓦片位置，视觉上等同无限地面
-    const cam = this.cameras.main;
-    this.bg.setTilePosition(cam.scrollX, cam.scrollY);
+    // 背景：跨过切换点就交叉淡入淡出下一张授权背景
+    this.bgLayer.update(this.elapsed);
+    this.syncBgState();
 
     this.inputSys.update();
     this.player.update(dt, this.inputSys.dirX, this.inputSys.dirY);
@@ -206,6 +246,33 @@ export class GameScene extends Phaser.Scene {
 
     this.updateHud();
     this.checkEnd();
+  }
+
+  // 同步全局可观测背景状态（e2e/线上校验用）
+  private syncBgState(): void {
+    const w = window as unknown as { __BG_STATE: { version: string; activeIndex: number; activeKey: string; activeName: string } };
+    if (!w.__BG_STATE) return;
+    w.__BG_STATE.activeIndex = this.bgLayer.activeIndex;
+    w.__BG_STATE.activeKey = this.bgLayer.activeKey;
+    w.__BG_STATE.activeName = this.bgLayer.activeName;
+  }
+
+  // 背景切换提示：屏幕上方短暂弹出「进入 XX」并淡出
+  private showBgToast(name: string): void {
+    if (this.bgToast) this.bgToast.destroy();
+    this.bgToast = this.add.text(GAME_W / 2, 96, `进入 · ${name}`, {
+      fontFamily: 'monospace', fontSize: '22px', color: '#9fe8ff'
+    }).setOrigin(0.5).setDepth(96).setScrollFactor(0).setAlpha(0);
+    this.tweens.add({
+      targets: this.bgToast,
+      alpha: 1,
+      y: 84,
+      duration: 220,
+      ease: 'Cubic.easeOut',
+      yoyo: true,
+      hold: 900,
+      onComplete: () => { this.bgToast?.destroy(); this.bgToast = null; }
+    });
   }
 
   // 暂停/恢复：切状态、显示遮罩、清摇杆、更新按钮文案
@@ -282,7 +349,32 @@ export class GameScene extends Phaser.Scene {
     vibrate(25);
     this.drops.spawn(e.x, e.y, 'xp', e.xp);
     if (Math.random() < e.goldChance) this.drops.spawn(e.x, e.y, 'gold', 1);
+    // 特殊掉落：极低概率的大白饭/饭盆（默认 1.5% / 0.35%，见 balance.ts）
+    const special = rollSpecialDrop(this.dropRng());
+    if (special === 'rice') this.drops.spawn(e.x, e.y, 'rice', RICE_HEAL);
+    else if (special === 'bowl') this.drops.spawn(e.x, e.y, 'bowl', ARMOR_MAX);
     if (e.isBoss) this.finish(true);
+  }
+
+  // 掉落随机源：E2E 可注入 window.__DROP_RNG 做受控掉落验证；默认 Math.random
+  private dropRng(): () => number {
+    const w = window as unknown as { __DROP_RNG?: () => number };
+    return w.__DROP_RNG ?? Math.random;
+  }
+
+  // 拾取反馈浮动文本：玩家头顶升起、淡出、自动销毁
+  private showPickupFeedback(text: string, color: number): void {
+    const t = this.add.text(this.player.x, this.player.y - 68, text, {
+      fontFamily: 'monospace', fontSize: '16px', color: `#${color.toString(16).padStart(6, '0')}`
+    }).setOrigin(0.5).setDepth(40).setScrollFactor(0);
+    this.tweens.add({
+      targets: t,
+      y: t.y - 34,
+      alpha: 0,
+      duration: 950,
+      ease: 'Cubic.easeOut',
+      onComplete: () => t.destroy()
+    });
   }
 
   private flashHurt(): void {
@@ -320,7 +412,18 @@ export class GameScene extends Phaser.Scene {
   private checkLevelUp(): void {
     if (this.levelSys.pending <= 0) return;
     const owned = this.weapons.owned.map(w => ({ id: w.def.id, level: w.level, maxed: w.maxed }));
-    const opts = rollUpgradeOptions(owned, this.passives);
+    // E2E 调试钩子：__UPGRADE_FORCE_ID 指定某张卡必须出现在面板（验收"大白饭"升级卡用）。
+    // 未设置时行为与线上完全一致（rollUpgradeOptions 默认 Math.random 洗牌）。
+    const force = (window as unknown as { __UPGRADE_FORCE_ID?: string }).__UPGRADE_FORCE_ID;
+    let opts = rollUpgradeOptions(owned, this.passives);
+    if (force && !opts.some(o => o.id === force)) {
+      const b = BUFF_POOL.find(x => x.id === force);
+      if (b) {
+        const forced: UpgradeOption = { kind: 'buff', id: b.id, name: b.name, desc: b.desc };
+        // 顶替随机结果中的一张，保证面板必有目标卡，且始终 3 卡不叠印
+        opts = [opts[0], opts[1], forced].filter((o): o is UpgradeOption => !!o);
+      }
+    }
     sfx.levelUp();
     vibrate([30, 50, 30]);
     this.inputSys.reset();   // 面板盖住世界：清掉残留的摇杆绘制
@@ -377,6 +480,8 @@ export class GameScene extends Phaser.Scene {
     this.hud.update({
       hp: this.stats.hp,
       maxHp: this.stats.maxHp,
+      armor: this.player.armorValue,
+      armorMax: this.player.armorMax,
       xpRatio: this.levelSys.ratio,
       xpCur: this.levelSys.xp,
       xpNeed: this.levelSys.need,

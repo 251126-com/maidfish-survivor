@@ -15,6 +15,8 @@ export interface HudWeaponInfo {
 export interface HudData {
   hp: number;
   maxHp: number;
+  armor: number;       // 饭盆护甲（0 = 无）
+  armorMax: number;    // 护甲上限（30）
   xpRatio: number;
   xpCur: number;       // 当前经验数值
   xpNeed: number;      // 升下一级所需经验
@@ -30,11 +32,13 @@ export interface HudData {
 
 export class Hud {
   private hpBar: Phaser.GameObjects.Graphics;
+  private armorBar: Phaser.GameObjects.Graphics;
   private xpBar: Phaser.GameObjects.Graphics;
   private bossBar: Phaser.GameObjects.Graphics;
   private timeText: Phaser.GameObjects.Text;
   private infoText: Phaser.GameObjects.Text;
   private hpText: Phaser.GameObjects.Text;
+  private armorText: Phaser.GameObjects.Text;
   private xpText: Phaser.GameObjects.Text;
   private weaponText: Phaser.GameObjects.Text;
   private bossText: Phaser.GameObjects.Text;
@@ -44,13 +48,20 @@ export class Hud {
   private vibText: Phaser.GameObjects.Text;
   private pauseBtn: Phaser.GameObjects.Rectangle;
   private pauseText: Phaser.GameObjects.Text;
+  private bgBtn: Phaser.GameObjects.Rectangle;
+  private bgText: Phaser.GameObjects.Text;
 
   // 暂停按钮回调：由 GameScene 注入，负责暂停/恢复逻辑
   onPauseToggle: (() => void) | null = null;
+  // 场景切换回调：由 GameScene 注入，负责切到下一张授权背景
+  onBgNext: (() => void) | null = null;
 
   // 缓存上次绘制值，避免每帧重画
   private lastHp = -1;
   private lastMaxHp = -1;
+  private lastArmor = -1;
+  private lastArmorMax = -1;
+  private lastArmorStr = '';
   private lastXp = -1;
   private lastBossHp = -1;
   private lastBossMaxHp = -1;
@@ -60,9 +71,11 @@ export class Hud {
   private lastXpStr = '';
   private lastWeaponStr = '';
   private lastPauseLabel = '';
+  private lastBgLabel = '';
 
   constructor(scene: Phaser.Scene) {
     this.hpBar = scene.add.graphics().setDepth(100).setScrollFactor(0);
+    this.armorBar = scene.add.graphics().setDepth(100).setScrollFactor(0);
     this.xpBar = scene.add.graphics().setDepth(100).setScrollFactor(0);
     this.bossBar = scene.add.graphics().setDepth(100).setScrollFactor(0);
 
@@ -76,6 +89,11 @@ export class Hud {
 
     this.hpText = scene.add.text(22, 40, '', {
       fontFamily: 'monospace', fontSize: '13px', color: '#ffd9d9'
+    }).setDepth(101).setScrollFactor(0);
+
+    // 护甲文本：血条下方、武器状态上方；护甲为 0 时留空不占视觉
+    this.armorText = scene.add.text(22, 52, '', {
+      fontFamily: 'monospace', fontSize: '11px', color: '#cfe4ff'
     }).setDepth(101).setScrollFactor(0);
 
     // XP 数字：经验条(10px)下方，血条上方
@@ -92,7 +110,15 @@ export class Hud {
       fontFamily: 'monospace', fontSize: '14px', color: '#ffe9a8'
     }).setOrigin(0.5, 0).setDepth(101).setScrollFactor(0);
 
-    // 右列按钮：暂停 / 音效 / 震动
+    // 右列按钮：场景 / 暂停 / 音效 / 震动
+    // 场景按钮显示当前授权背景名，点按切到下一张（桌面/手机横屏都避开摇杆触发区）
+    this.bgBtn = this.makeBtn(scene, 86, '');
+    this.bgBtn.on('pointerdown', () => {
+      if (this.onBgNext) this.onBgNext();
+    });
+    this.bgText = this.makeBtnText(scene, 86, '');
+    this.setBgName('');
+
     this.pauseBtn = this.makeBtn(scene, 126, '⏸ 暂停');
     this.pauseBtn.on('pointerdown', () => {
       if (this.onPauseToggle) this.onPauseToggle();
@@ -156,6 +182,15 @@ export class Hud {
     this.pauseBtn.setStrokeStyle(2, paused ? 0x4de8c2 : 0x3d6c9e);
   }
 
+  // 场景按钮文案 = 当前授权背景名（切换后由 GameScene 调用刷新，暂停时也保持最新）
+  setBgName(name: string): void {
+    const label = name ? `🌌 ${name}` : '🌌 场景';
+    if (label === this.lastBgLabel) return;
+    this.lastBgLabel = label;
+    this.bgText.setText(label);
+    this.bgBtn.setStrokeStyle(2, name ? 0x6fc0ff : 0x3d6c9e);
+  }
+
   update(d: HudData): void {
     // 经验条（顶部通栏）
     if (d.xpRatio !== this.lastXp) {
@@ -189,6 +224,25 @@ export class Hud {
     if (hpStr !== this.lastHpStr) {
       this.lastHpStr = hpStr;
       this.hpText.setText(hpStr);
+    }
+
+    // 护甲条：仅在护甲 > 0 时显示（蓝色），破甲后自动隐藏
+    if (d.armor !== this.lastArmor || d.armorMax !== this.lastArmorMax) {
+      this.lastArmor = d.armor;
+      this.lastArmorMax = d.armorMax;
+      this.armorBar.clear();
+      if (d.armor > 0) {
+        const ar = Phaser.Math.Clamp(d.armor / Math.max(1, d.armorMax), 0, 1);
+        this.armorBar.fillStyle(0x000000, 0.5);
+        this.armorBar.fillRoundedRect(20, 46, 244, 10, 5);
+        this.armorBar.fillStyle(0x6fb8ff, 1);
+        this.armorBar.fillRoundedRect(22, 48, 240 * ar, 6, 3);
+      }
+    }
+    const armorStr = d.armor > 0 ? `🛡 护甲 ${Math.max(0, Math.ceil(d.armor))} / ${Math.ceil(d.armorMax)}` : '';
+    if (armorStr !== this.lastArmorStr) {
+      this.lastArmorStr = armorStr;
+      this.armorText.setText(armorStr);
     }
 
     // 计时
@@ -236,11 +290,13 @@ export class Hud {
 
   destroy(): void {
     this.hpBar.destroy();
+    this.armorBar.destroy();
     this.xpBar.destroy();
     this.bossBar.destroy();
     this.timeText.destroy();
     this.infoText.destroy();
     this.hpText.destroy();
+    this.armorText.destroy();
     this.xpText.destroy();
     this.weaponText.destroy();
     this.bossText.destroy();
@@ -250,5 +306,7 @@ export class Hud {
     this.vibText.destroy();
     this.pauseBtn.destroy();
     this.pauseText.destroy();
+    this.bgBtn.destroy();
+    this.bgText.destroy();
   }
 }

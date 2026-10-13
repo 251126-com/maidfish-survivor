@@ -109,7 +109,7 @@ console.log('  移动前(%d,%d) → 移动后(%d,%d)', px0, py0, sMove.playerX, 
 const joyOk = !!joyWhile && joyWhile.active === true
   && Math.abs(joyWhile.baseX - 640) < 1 && Math.abs(joyWhile.baseY - 420) < 1
   && joyWhile.magnitude > 0.9
-  && joyWhile.dirX < -0.9 && joyWhile.dirY < -0.4;   // 左上方向
+  && joyWhile.dirX < -0.5 && joyWhile.dirY < -0.3;   // 左上方向（拖拽向量归一化约 -0.77/-0.63）
 const moveOk = (sMove.playerX - px0) < -20 && (sMove.playerY - py0) < -20;
 const joyGoneOk = (await gameState()).joystick === null;   // 松手后消失
 await page.screenshot({ path: `${OUT}/31-mobile-drag.png` });
@@ -156,12 +156,12 @@ const restartOk = sceneKey2 === 'Game' && sRestart.hp > 0 && sRestart.elapsed < 
 await page.waitForTimeout(1200);
 const s2 = await gameState();
 console.log('  常规运行:', JSON.stringify(s2));
-const runOk = s2.activeScene === 'Game' && s2.elapsed > 1 && s2.enemies > 0 && s2.bullets > 0;
+const runOk = s2.activeScene === 'Game' && s2.elapsed > sRestart.elapsed && s2.enemies > 0 && s2.bullets > 0;
 
 await browser.close();
 
 const checks = [
-  ['页面加载版本标记 __VERSION=0.5.0', ver === '0.5.1'],
+  ['页面加载版本标记 __VERSION=0.8.0', ver === '0.8.0'],
   ['FIT 缩放：画布长宽比≈16:9 且完整在视口内', fitOk],
   ['触摸点开始游戏并进入战斗（刷怪/开火）', startOk],
   ['触摸拖动时摇杆可见且方向正确（左上）', joyOk],

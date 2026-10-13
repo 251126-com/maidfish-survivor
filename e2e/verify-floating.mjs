@@ -54,11 +54,18 @@ const panelState = () => page.evaluate(() => {
     sfx: window.__sfx.enabled
   };
 });
+// 从运行时布局读取面板按钮坐标，避免硬编码与布局漂移
+const itemPos = (id) => page.evaluate((iid) => {
+  const s = window.__game.scene.getScene('Game');
+  const it = s.floatMenu.layout.items.find(i => i.id === iid);
+  return it ? { x: it.cx, y: it.cy } : null;
+}, id);
+const clickItem = async (id) => { const p = await itemPos(id); if (!p) throw new Error('missing item ' + id); await click(p.x, p.y); };
 
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1600);
 const ver = await page.evaluate(() => window.__VERSION);
-check('版本标记 __VERSION=0.5.0', ver === '0.5.1', `实际 ${ver}`);
+check('版本标记 __VERSION=0.8.0', ver === '0.8.0', `实际 ${ver}`);
 
 await click(640, 230);            // 开始游戏
 await page.waitForTimeout(1800);
@@ -81,7 +88,8 @@ await click(1202, 638);
 let ps = await panelState();
 st = await gm();
 check('点按球打开面板', ps.open && ps.overlay, JSON.stringify(ps));
-check('面板含 6 个操作按钮', ps.items.length === 6 && ps.items.every(i => i.v), ps.items.map(i => i.id).join(','));
+check('面板含 7 个操作按钮(含场景切换)', ps.items.length === 7 && ps.items.every(i => i.v), ps.items.map(i => i.id).join(','));
+check('面板含场景切换入口', ps.items.some(i => i.id === 'bg' && /场景/.test(i.text)), ps.items.find(i => i.id === 'bg')?.text);
 check('面板含 Fullscreen 入口', ps.items.some(i => i.id === 'full' && /全屏/.test(i.text)), ps.items.find(i => i.id === 'full')?.text);
 check('打开面板时无摇杆误触', st.joy === 'idle', st.joy);
 check('打开面板即暂停(elapsed 冻结)', st.paused === true, `paused=${st.paused}`);
@@ -115,28 +123,28 @@ await click(1010, 480);                       // 再点球开面板
 ps = await panelState();
 check('面板再次打开', ps.open);
 const sfx0 = ps.sfx;
-await click(640, 274);                        // 音效按钮
+await clickItem('sound');                    // 音效按钮（布局动态坐标）
 const sfx1 = (await panelState()).sfx;
 check('音效开关切换并持久化', sfx1 === !sfx0, `on=${sfx0} → ${sfx1}`);
 check('音效按钮文案已刷新', (await panelState()).items.some(i => i.id === 'sound' && /音效：关/.test(i.text)));
-await click(640, 338);                        // 震动按钮
+await clickItem('vib');                      // 震动按钮（布局动态坐标）
 const vibTxt = (await panelState()).items.find(i => i.id === 'vib')?.text ?? '';
 check('震动按钮文案已刷新', /震动：关/.test(vibTxt), vibTxt);
 
 // 全屏手势入口：点 ⛶ 全屏 → 请求进入全屏；再次点 → 退出
 const fsBefore = await page.evaluate(() => !!(document.fullscreenElement || document.webkitFullscreenElement));
-await click(640, 402);                        // full 按钮
+await clickItem('full');                     // full 按钮（布局动态坐标）
 await page.waitForTimeout(400);
 const fsEnter = await page.evaluate(() => !!(document.fullscreenElement || document.webkitFullscreenElement));
 check('Fullscreen 手势入口：进入全屏', fsEnter === true && fsBefore === false, `before=${fsBefore} after=${fsEnter}`);
 await page.waitForTimeout(200);
-await click(640, 402);                        // 再点退出
+await clickItem('full');                     // 再点退出全屏
 await page.waitForTimeout(400);
 const fsExit = await page.evaluate(() => !!(document.fullscreenElement || document.webkitFullscreenElement));
 check('Fullscreen 手势入口：退出全屏', fsExit === false, `after=${fsExit}`);
 
 // 8) 继续按钮 → 关面板并恢复
-await click(640, 210);
+await clickItem('resume');
 st = await gm();
 check('继续按钮恢复游戏', st.paused === false && !st.floatOpen, `paused=${st.paused}, open=${st.floatOpen}`);
 
@@ -176,7 +184,7 @@ await page.screenshot({ path: `${OUT}/86-desktop-after-levelup-pick.png` });
 // 10) 重开本局
 await click(1010, 480);
 await page.waitForTimeout(150);
-await click(640, 466);                        // 重开本局（新 6 行布局第 5 行）
+await clickItem('restart');                  // 重开本局（布局动态坐标）
 await page.waitForTimeout(900);
 st = await gm();
 check('重开本局 → 回到 Game 且时间清零', st.activeScene === 'Game' && st.elapsed < 3, `elapsed=${st.elapsed}`);
@@ -187,7 +195,7 @@ await click(1010, 480);
 await page.waitForTimeout(200);
 const psOpen = await panelState();
 check('重开后面板可再次打开', psOpen.open);
-await click(640, 530);                        // 返回主菜单（新 6 行布局第 6 行）
+await clickItem('menu');                     // 返回主菜单（布局动态坐标）
 await page.waitForTimeout(700);
 const scene = await page.evaluate(() => window.__game.scene.getScenes(true)[0]?.scene?.key);
 check('返回主菜单 → Menu', scene === 'Menu', `scene=${scene}`);

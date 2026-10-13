@@ -1,14 +1,24 @@
-// 掉落系统：经验球与金币，池化 + 磁吸拾取
+// 掉落系统：经验球/金币/大白饭/饭盆，池化 + 磁吸拾取
+// v0.7.0 新增两种特殊掉落：大白饭（回血）、饭盆（护甲）。
 import Phaser from 'phaser';
 import { EntityPool, type Poolable } from '../core/pool.ts';
 import { POOL_LIMIT } from '../config/balance.ts';
 import type { Player } from './player.ts';
 
+export type LootKind = 'xp' | 'gold' | 'rice' | 'bowl';
+
+const LOOT_TEXTURE: Record<LootKind, string> = {
+  xp: 'gem_xp',
+  gold: 'gem_gold',
+  rice: 'loot_rice',
+  bowl: 'loot_bowl'
+};
+
 export class Gem implements Poolable {
   active = false;
   x = 0; y = 0;
   vx = 0; vy = 0;
-  kind: 'xp' | 'gold' = 'xp';
+  kind: LootKind = 'xp';
   value = 0;
   sprite!: Phaser.GameObjects.Image;
 
@@ -19,7 +29,7 @@ export class Gem implements Poolable {
 export class DropSystem {
   readonly pool: EntityPool<Gem>;
   // 拾取回调，由 GameScene 注入
-  onPickup: ((kind: 'xp' | 'gold', value: number) => void) | null = null;
+  onPickup: ((kind: LootKind, value: number) => void) | null = null;
 
   constructor(scene: Phaser.Scene) {
     this.pool = new EntityPool<Gem>(() => {
@@ -31,7 +41,7 @@ export class DropSystem {
     }, POOL_LIMIT.gem);
   }
 
-  spawn(x: number, y: number, kind: 'xp' | 'gold', value: number): void {
+  spawn(x: number, y: number, kind: LootKind, value: number): void {
     const g = this.pool.acquire();
     if (!g) return;
     g.x = x;
@@ -43,7 +53,7 @@ export class DropSystem {
     const sp = 40 + Math.random() * 40;
     g.vx = Math.cos(a) * sp;
     g.vy = Math.sin(a) * sp;
-    g.sprite.setTexture(kind === 'xp' ? 'gem_xp' : 'gem_gold');
+    g.sprite.setTexture(LOOT_TEXTURE[kind] ?? 'gem_xp');
     g.sprite.setPosition(x, y);
     g.sprite.setVisible(true);
   }

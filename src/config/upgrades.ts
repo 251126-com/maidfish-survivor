@@ -19,7 +19,7 @@ export interface PlayerStats {
 export const BUFF_POOL: BuffDef[] = [
   { id: 'atk',   name: '锋利弹药', desc: '全局伤害 +10%',
     apply: p => { p.damageMult += 0.10; } },
-  { id: 'hp',    name: '鲸鱼饭团', desc: '生命上限 +20，并回复 20',
+  { id: 'hp',    name: '大白饭', desc: '饱餐一顿：上限+20，回复20生命',
     apply: p => { p.maxHp += 20; p.hp = Math.min(p.maxHp, p.hp + 20); } },
   { id: 'spd',   name: '轻快步伐', desc: '移速 +8%',
     apply: p => { p.speed *= 1.08; } },

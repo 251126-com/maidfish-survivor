@@ -156,3 +156,14 @@ test('每帧 compact 的循环模型：连续发射-回收永远有容量', () =
   }
   assert.equal(born.size, 6, '稳定态：6 发子弹在飞，均在池容量内');
 });
+
+test('拾取释放后对象被复用，池不无限增长（回收复用）', () => {
+  const pool = new EntityPool(() => ({ active: false, spawn() {}, despawn() {} }), 10);
+  const a = pool.acquire()!;
+  pool.release(a);
+  pool.compact();
+  const b = pool.acquire()!;
+  assert.equal(b, a, '释放后应复用同一对象');
+  assert.equal(pool.live.length, 1);
+  assert.equal(pool.peak, 1);
+});

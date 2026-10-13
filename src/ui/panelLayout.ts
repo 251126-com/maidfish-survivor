@@ -131,28 +131,59 @@ function isCJK(ch: string): boolean {
 }
 
 // 预估文本换行行数与行高，用于纯逻辑层挑选字号（Phaser 运行时还会用真实 canvas 度量复核）
+// v0.7.1 硬保证：优先保证 name/desc 文字带硬不重叠 —— 估算层永不返回"已放不下却仍按最小字号溢出"的尺寸；
+//   放不下时跌破首选最小字号继续缩（直到 absFloor）；absFloor 仍放不下则返回 truncated=true，
+//   运行时据此截断为可用行数 + "…"。返回的 fontSize 恒为正整数。
+export interface FittedText {
+  fontSize: number;
+  lines: number;
+  lineHeight: number;
+  truncated: boolean;
+}
+
+// 在 [hardFloor..start] 中选择"最大的能放下文本的字号"（依赖注入度量器，供运行时用真实 canvas 度量）
+export interface FontFit { fontSize: number; truncated: boolean; }
+
+export function pickLargestFit(
+  text: string,
+  maxW: number,
+  maxH: number,
+  start: number,
+  hardFloor: number,
+  measure: (fs: number) => number
+): FontFit {
+  for (let fs = start; fs >= hardFloor; fs--) {
+    if (measure(fs) <= maxH + 0.01) return { fontSize: fs, truncated: false };
+  }
+  return { fontSize: Math.max(1, hardFloor), truncated: true };
+}
+
 export function fitTextStyle(
   text: string,
   maxW: number,
   maxH: number,
   startFont: number,
-  minFont = 10
-): { fontSize: number; lines: number; lineHeight: number } {
-  let fontSize = startFont;
-  for (;;) {
+  minFont = 10,
+  absFloor = 6
+): FittedText {
+  const floor = Math.min(absFloor, startFont);
+  const lineHeightAt = (fs: number) => Math.max(1, Math.ceil(fs * 1.4));
+  for (let fontSize = startFont; fontSize >= floor; fontSize--) {
     let width = 0;
     for (const ch of text) width += isCJK(ch) ? fontSize * 1.02 : fontSize * 0.6;
     width = Math.ceil(width);
     const lines = Math.max(1, Math.ceil(width / Math.max(20, maxW)));
-    const lineHeight = Math.ceil(fontSize * 1.4);
-    if (lines * lineHeight <= maxH) return { fontSize, lines, lineHeight };
-    if (fontSize <= minFont) {
-      return { fontSize: Math.max(10, minFont), lines, lineHeight: Math.ceil(Math.max(10, minFont) * 1.4) };
-    }
-    fontSize--;
+    const lineHeight = lineHeightAt(fontSize);
+    if (lines * lineHeight <= maxH) return { fontSize, lines, lineHeight, truncated: false };
   }
+  // 跌破硬底仍放不下：返回硬底字号 + 截断标记，行数=可用行数（运行时据此截断文本）
+  const fontSize = floor;
+  const lineHeight = lineHeightAt(fontSize);
+  const lines = Math.max(1, Math.floor(maxH / lineHeight));
+  return { fontSize, lines, lineHeight, truncated: true };
 }
 
+// 兼容旧调用名：描述自适应缩字
 // 兼容旧调用名：描述自适应缩字
 export function fitDescStyle(
   text: string,
@@ -171,4 +202,76 @@ export function clampBall(x: number, y: number, r: number, gw: number, gh: numbe
     x: Math.max(m, Math.min(gw - m, x)),
     y: Math.max(m, Math.min(gh - m, y))
   };
+}
+
+// ===== v0.7.0 逐字符折行（根治 Phaser wordWrap 对无空格纯中文不折行） =====
+// 实测根因：Phaser Text 默认 wordWrap 按空格切词，纯中文无空格时整段不换行，
+//    desc.width=675 远超内容区 280（probe-width 实证）。此处改为逐字符累计折行：
+//    任何字符（含 CJK）在达到 maxW 处折行；单字符本身超宽仍单独成行（不丢字）。
+// 度量器注入（measure(fs, str) 返回该字号下字符串宽度），纯逻辑可单测，
+// 运行时由 Phaser canvas 提供真实度量。
+
+export interface FitLines {
+  fontSize: number;
+  lines: string[];
+  lineHeight: number;
+  truncated: boolean;
+}
+
+export function wrapByChar(
+  text: string,
+  maxW: number,
+  measure: (s: string) => number
+): string[] {
+  if (text === '') return [''];
+  const lines: string[] = [];
+  let cur = '';
+  for (const ch of text) {
+    const test = cur + ch;
+    if (cur === '' || measure(test) <= maxW) {
+      cur = test;
+    } else {
+      lines.push(cur);
+      cur = ch;
+    }
+  }
+  if (cur !== '' || lines.length === 0) lines.push(cur);
+  return lines;
+}
+
+// 折行 + 缩字 + 截断一体化：在 [floor..start] 选最大可放下字号；
+// 硬底仍放不下 → 截断为可用行数，末行尾追加 "…" 且保证不越宽。
+export function fitTextLines(
+  text: string,
+  maxW: number,
+  maxH: number,
+  startFont: number,
+  minFont = 11,
+  absFloor = 6,
+  measure: (fs: number, s: string) => number
+): FitLines {
+  const floor = Math.max(1, Math.min(absFloor, startFont));
+  const lineHeightAt = (fs: number) => Math.max(1, Math.ceil(fs * 1.4));
+  for (let fs = startFont; fs >= floor; fs--) {
+    const lineHeight = lineHeightAt(fs);
+    const lines = wrapByChar(text, maxW, (s) => measure(fs, s));
+    if (lines.length * lineHeight <= maxH) {
+      return { fontSize: fs, lines, lineHeight, truncated: false };
+    }
+  }
+  // 硬底仍放不下：截断为可用行数，末行尾追加省略号（保证不越宽）
+  const fontSize = floor;
+  const lineHeight = lineHeightAt(fontSize);
+  const allLines = wrapByChar(text, maxW, (s) => measure(fontSize, s));
+  const avail = Math.max(1, Math.floor(maxH / lineHeight));
+  const lines = allLines.slice(0, avail);
+  if (allLines.length > avail && lines.length > 0) {
+    const ell = '…';
+    let last = lines[lines.length - 1] ?? '';
+    while (last.length > 0 && measure(fontSize, last + ell) > maxW) {
+      last = last.slice(0, -1);
+    }
+    lines[lines.length - 1] = last + ell;
+  }
+  return { fontSize, lines, lineHeight, truncated: true };
 }

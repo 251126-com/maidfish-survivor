@@ -8,28 +8,21 @@ export class BootScene extends Phaser.Scene {
   preload(): void {
     // 正式角色素材：用户设计图抠出的透明 PNG（保留白色头饰/围裙）
     this.load.image('player_whale', 'assets/player_whale.png');
+    // 四张授权背景（3840x2160 原图已处理为 1920x1080 JPEG 放 public/assets/bg）
+    // 全部在启动场景并行预载，局内切换不产生任何加载抖动
+    this.load.image('bg_moon', 'assets/bg/bg_moon.jpg');
+    this.load.image('bg_trench', 'assets/bg/bg_trench.jpg');
+    this.load.image('bg_ship', 'assets/bg/bg_ship.jpg');
+    this.load.image('bg_vortex', 'assets/bg/bg_vortex.jpg');
   }
 
   create(): void {
-    this.makeBackground();
     // 角色贴图已在 preload 从正式素材加载，不再程序化生成
     this.makeEnemies();
     this.makeProjectiles();
     this.makeDrops();
+    this.makeLoot();
     this.scene.start('Menu');
-  }
-
-  // 背景网格瓦片 64x64
-  private makeBackground(): void {
-    const g = this.add.graphics();
-    g.fillStyle(0x0e1a2b, 1);
-    g.fillRect(0, 0, 64, 64);
-    g.lineStyle(1, 0x16283f, 1);
-    g.strokeRect(0.5, 0.5, 63, 63);
-    g.fillStyle(0x16283f, 1);
-    g.fillCircle(32, 32, 1.5);
-    g.generateTexture('bg_tile', 64, 64);
-    g.destroy();
   }
 
   private makeEnemies(): void {
@@ -143,6 +136,66 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0xfff3b0, 1);
     g.fillCircle(6, 6, 3);
     g.generateTexture('gem_gold', 16, 16);
+    g.destroy();
+
+    // 大白饭（拾取回血）：小碗 + 白饭堆
+    g = this.add.graphics();
+    g.fillStyle(0xe8eef4, 1);
+    g.fillEllipse(10, 13, 16, 7);
+    g.fillStyle(0xd6e4f0, 1);
+    g.fillEllipse(10, 12, 15, 6);
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(10, 8, 6.5);
+    g.fillStyle(0xf2ecdc, 0.9);
+    g.fillCircle(8, 7, 2);
+    g.fillCircle(12, 9, 1.6);
+    g.generateTexture('loot_rice', 20, 18);
+    g.destroy();
+
+    // 饭盆（拾取护甲）：宽脸盆 + 白饭堆
+    g = this.add.graphics();
+    g.fillStyle(0xb8cfe0, 1);
+    g.fillEllipse(11, 15, 22, 9);
+    g.fillStyle(0xe6f1fa, 1);
+    g.fillEllipse(11, 13, 20, 8);
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(11, 9, 7);
+    g.fillStyle(0xf2ecdc, 0.9);
+    g.fillCircle(9, 8, 2);
+    g.fillCircle(13, 10, 1.8);
+    g.generateTexture('loot_bowl', 22, 20);
+    g.destroy();
+  }
+
+  // 程序化「大白饭饭盆」：角色有护甲时头顶的 overlay（跟随翻面/动作）
+  private makeLoot(): void {
+    const g = this.add.graphics();
+
+    // 盆身（脸盆）：浅蓝灰半椭球 + 盆沿
+    g.fillStyle(0x9fb8cc, 1);
+    g.fillEllipse(36, 50, 64, 16);
+    g.fillStyle(0xcfe0ee, 1);
+    g.fillEllipse(36, 48, 60, 14);
+    g.fillStyle(0xeaf4fc, 1);
+    g.fillEllipse(36, 46, 56, 11);
+    g.lineStyle(2.5, 0x8aa7bd, 1);
+    g.strokeEllipse(36, 50, 64, 16);
+
+    // 大白饭堆：高出盆沿的白色饭团 + 阴影 + 米粒高光
+    g.fillStyle(0xeae2d0, 0.9);
+    g.fillEllipse(36, 44, 50, 12);
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(36, 30, 20);
+    g.fillStyle(0xfffdf6, 1);
+    g.fillEllipse(36, 34, 44, 18);
+    g.fillStyle(0xf2ecdc, 0.85);
+    g.fillCircle(30, 24, 2.6);
+    g.fillCircle(43, 22, 2.1);
+    g.fillCircle(36, 28, 1.8);
+    g.fillCircle(26, 32, 1.6);
+    g.fillCircle(46, 33, 1.8);
+
+    g.generateTexture('rice_bowl', 72, 64);
     g.destroy();
   }
 }
