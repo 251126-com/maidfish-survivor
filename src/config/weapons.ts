@@ -9,6 +9,8 @@ export interface WeaponLevelDef {
   speed: number;     // 弹速 px/s（环绕武器为角速度）
   range: number;     // 射程/环绕半径 px
   splash?: number;   // 溅射半径 px（命中后对周围敌人造成范围伤害）
+  spread?: number;   // v0.11.0 多发时的扇形间隔（弧度），默认 0.14
+  life?: number;     // v0.11.0 子弹寿命（秒），默认 2（霰弹枪短射程用）
 }
 
 export interface WeaponDef {
@@ -62,6 +64,22 @@ export const WEAPONS: Record<string, WeaponDef> = {
       { damage: 16, cooldown: 0.45, count: 3, pierce: 99, speed: 2.8, range: 110 },
       { damage: 20, cooldown: 0.45, count: 3, pierce: 99, speed: 3.0, range: 120 },
       { damage: 26, cooldown: 0.4, count: 4, pierce: 99, speed: 3.2, range: 135 }
+    ]
+    // 无进化：纯数值成长路线
+  },
+
+  // ===== v0.11.0 霰弹枪：近距离扇形喷射 =====
+  shotgun: {
+    id: 'shotgun',
+    name: '深海霰弹枪',
+    desc: '近距离扇形喷射，贴脸高伤',
+    maxLevel: 5,
+    levels: [
+      { damage: 9,  cooldown: 0.85, count: 6,  pierce: 1, speed: 680, range: 280, spread: 0.32, life: 0.42 },
+      { damage: 10, cooldown: 0.82, count: 7,  pierce: 1, speed: 680, range: 290, spread: 0.34, life: 0.43 },
+      { damage: 10, cooldown: 0.78, count: 8,  pierce: 1, speed: 690, range: 300, spread: 0.36, life: 0.44 },
+      { damage: 12, cooldown: 0.74, count: 9,  pierce: 2, speed: 700, range: 310, spread: 0.38, life: 0.45 },
+      { damage: 14, cooldown: 0.68, count: 10, pierce: 2, speed: 710, range: 320, spread: 0.40, life: 0.46 }
     ]
     // 无进化：纯数值成长路线
   },

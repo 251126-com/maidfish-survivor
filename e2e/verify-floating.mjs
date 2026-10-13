@@ -65,7 +65,7 @@ const clickItem = async (id) => { const p = await itemPos(id); if (!p) throw new
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1600);
 const ver = await page.evaluate(() => window.__VERSION);
-check('版本标记 __VERSION=0.9.0', ver === '0.9.0', `实际 ${ver}`);
+check('版本标记 __VERSION=0.11.0', ver === '0.11.0', `实际 ${ver}`);
 
 await click(640, 230);            // 开始游戏
 await page.waitForTimeout(1800);

@@ -35,7 +35,7 @@ await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1400);
 
 const ver = await page.evaluate(() => window.__VERSION ?? null);
-check('版本标记 __VERSION=0.9.0', ver === '0.9.0', `实际 ${ver}`);
+check('版本标记 __VERSION=0.11.0', ver === '0.11.0', `实际 ${ver}`);
 
 const fsHook = await page.evaluate(() => {
   const h = window.__FS;
@@ -188,7 +188,7 @@ mp.on('console', m => { if (m.type() === 'error' && !isNoise(m.text())) errors.p
 await mp.goto(URL, { waitUntil: 'load' });
 await mp.waitForTimeout(1400);
 const mVer = await mp.evaluate(() => window.__VERSION ?? null);
-check('手机端 __VERSION=0.9.0', mVer === '0.9.0', `实际 ${mVer}`);
+check('手机端 __VERSION=0.11.0', mVer === '0.11.0', `实际 ${mVer}`);
 await mp.screenshot({ path: `${OUT}/20-mobile-menu.png` });
 const btn = await pagePoint(mp, 640, 216);
 await mp.touchscreen.tap(btn.x, btn.y);

@@ -37,9 +37,9 @@ await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1600);
 
 const ver = await page.evaluate(() => window.__VERSION ?? null);
-check('版本标记 __VERSION=0.9.0', ver === '0.9.0', `实际 ${ver}`);
+check('版本标记 __VERSION=0.11.0', ver === '0.11.0', `实际 ${ver}`);
 const mark = await page.evaluate(() => window.__BG_MARK ?? null);
-check('背景标记 __BG_MARK 版本/数量/键', !!mark && mark.version === '0.9.0' && mark.count === 4 && JSON.stringify(mark.keys) === JSON.stringify(expectBg),
+check('背景标记 __BG_MARK 版本/数量/键', !!mark && mark.version === '0.11.0' && mark.count === 4 && JSON.stringify(mark.keys) === JSON.stringify(expectBg),
   `实际 ${JSON.stringify(mark)}`);
 
 // 主菜单：四卡选关 + 首屏大背景
@@ -93,7 +93,7 @@ const layerInfo = await page.evaluate(() => {
   };
 });
 check('菜单选关生效：开局背景为 bg_moon', layerInfo.activeKey === 'bg_moon', `实际 ${layerInfo.activeKey}`);
-check('__BG_STATE 与活动背景一致(v0.9.0)', layerInfo.state && layerInfo.state.version === '0.9.0' && layerInfo.state.activeKey === layerInfo.activeKey,
+check('__BG_STATE 与活动背景一致(v0.9.0)', layerInfo.state && layerInfo.state.version === '0.11.0' && layerInfo.state.activeKey === layerInfo.activeKey,
   JSON.stringify(layerInfo.state));
 check('四张图 cover 铺满 1280x720 且不随相机滚动', layerInfo.cover.every(i => i.w >= 1280 && i.h >= 720 && i.sfx === 0 && i.sfy === 0),
   JSON.stringify(layerInfo.cover.map(i => `${i.key}:${i.w.toFixed(0)}x${i.h.toFixed(0)}`)));
@@ -240,7 +240,7 @@ await mpage.goto(URL, { waitUntil: 'load' });
 await mpage.waitForTimeout(1600);
 
 const mVer = await mpage.evaluate(() => window.__VERSION ?? null);
-check('手机端版本标记 0.9.0', mVer === '0.9.0', `实际 ${mVer}`);
+check('手机端版本标记 0.9.0', mVer === '0.11.0', `实际 ${mVer}`);
 
 // FIT 适配：画布必须完整落在 844x390 视口内
 const box = await mpage.locator('canvas').first().boundingBox();
@@ -357,7 +357,7 @@ console.log('\n===== 汇总 =====');
 const failed = results.filter(r => !r[1]);
 check(`控制台/页面错误为 0`, errors.length === 0, errors.slice(0, 5).join(' | '));
 for (const [n, ok, d] of results) console.log(`${ok ? '✔' : '✘'} ${n}${d !== '' ? '  [' + d + ']' : ''}`);
-console.log(`\n===== v0.9.0 背景验收：${results.length - failed.length}/${results.length} 通过，错误 ${errors.length} =====`);
+console.log(`\n===== v0.11.0 背景验收：${results.length - failed.length}/${results.length} 通过，错误 ${errors.length} =====`);
 if (failed.length > 0 || errors.length > 0) process.exit(1);
 console.log('截图目录:', OUT);
 process.exit(0);

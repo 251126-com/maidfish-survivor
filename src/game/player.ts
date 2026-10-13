@@ -8,7 +8,7 @@
 //  - 受伤优先扣护甲，护甲破碎 → overlay 消失（恢复普通角色立绘）+ 破碎粒子。
 // 说明：用户素材为不透明设计稿，本处采用忠实程序化饭盆 overlay 而非完整换图。
 import Phaser from 'phaser';
-import { WORLD_W, WORLD_H, ARMOR_MAX } from '../config/balance.ts';
+import { WORLD_W, WORLD_H, ARMOR_MAX, STARTER_ARMOR } from '../config/balance.ts';
 import type { PlayerStats } from '../config/upgrades.ts';
 import { applyBowlPickup, absorbDamage, type ArmorState } from './armor.ts';
 import { healClamp } from './collectibles.ts';
@@ -43,6 +43,9 @@ export class Player {
   private hitSquash = 0;// 受击挤压系数 0..1（指数衰减）
   private hitKnockX = 0;// 受击后仰位移：沿命中来源反向弹开（指数衰减）
   private hitKnockY = 0;
+  // v0.11.0 水母麻痹：短暂减速（slowT 剩余秒 / slowFactor 速度倍率）
+  slowT = 0;
+  slowFactor = 1;
   private baseScale: number;
   private bowlScale: number;
 
@@ -61,7 +64,7 @@ export class Player {
   constructor(scene: Phaser.Scene, stats: PlayerStats) {
     this.scene = scene;
     this.stats = stats;
-    this.armor = { armor: 0, max: ARMOR_MAX };
+    this.armor = { armor: STARTER_ARMOR, max: ARMOR_MAX };  // v0.10.0 开局自带护盾
     this.sprite = scene.add.image(this.x, this.y, 'player_whale');
     this.baseScale = DISPLAY_H / Math.max(1, this.sprite.height);
     this.sprite.setScale(this.baseScale);
@@ -72,7 +75,7 @@ export class Player {
     this.bowlScale = BOWL_DISPLAY_H / Math.max(1, this.bowlSpr.height);
     this.bowlSpr.setScale(this.bowlScale * this.baseScale);
     this.bowlSpr.setDepth(21);
-    this.bowlSpr.setVisible(false);
+    this.bowlSpr.setVisible(STARTER_ARMOR > 0);   // 开局护盾也显示饭盆头
 
     // 表情叠加层：锚定脸部中心（素材像素分析锚点），深度高于身体、低于饭盆
     this.fx = scene.add.image(this.x + this.fxOff.cx, this.y + this.fxOff.cy, 'fx_idle');
@@ -99,9 +102,11 @@ export class Player {
     this.animT += dt;
     const moving = dirX !== 0 || dirY !== 0;
 
+    if (this.slowT > 0) this.slowT -= dt;
+    const effSpeed = this.stats.speed * (this.slowT > 0 ? this.slowFactor : 1);
     if (moving) {
-      this.x += dirX * this.stats.speed * dt;
-      this.y += dirY * this.stats.speed * dt;
+      this.x += dirX * effSpeed * dt;
+      this.y += dirY * effSpeed * dt;
       // 限制在世界内
       this.x = Phaser.Math.Clamp(this.x, 24, WORLD_W - 24);
       this.y = Phaser.Math.Clamp(this.y, 24, WORLD_H - 24);
@@ -217,6 +222,17 @@ export class Player {
   setAimTarget(x: number | null, y: number | null): void {
     if (x === null || y === null) { this.aimTarget = null; return; }
     this.aimTarget = { x, y };
+  }
+
+  /** v0.11.0 水母麻痹：进入减速状态（更低的因子优先、时长取较大值） */
+  applySlow(dur: number, factor: number): void {
+    if (dur <= 0 || factor >= 1) return;
+    if (this.slowT <= 0 || factor < this.slowFactor) {
+      this.slowT = dur;
+      this.slowFactor = factor;
+    } else {
+      this.slowT = Math.max(this.slowT, dur);
+    }
   }
 
   /** Boss 预警/阶段切换：警觉表情 */

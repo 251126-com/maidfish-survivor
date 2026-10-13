@@ -25,10 +25,10 @@ page.on('console', m => { if (m.type() === 'error' && !isNoise(m.text())) errors
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 const ver = await page.evaluate(() => window.__VERSION ?? null);
-check('版本标记 __VERSION=0.9.0', ver === '0.9.0', `实际 ${ver}`);
+check('版本标记 __VERSION=0.11.0', ver === '0.11.0', `实际 ${ver}`);
 const lootMark = await page.evaluate(() => window.__LOOT_MARK ?? null);
-check('__LOOT_MARK 版本/概率/回血/护甲常量',
-  !!lootMark && lootMark.version === '0.9.0' && lootMark.riceChance === 0.015 && lootMark.bowlChance === 0.0035 && lootMark.riceHeal === 20 && lootMark.armorMax === 30,
+check('__LOOT_MARK 版本/概率/回血/护甲/开局护盾常量',
+  !!lootMark && lootMark.version === '0.11.0' && lootMark.riceChance === 0.015 && lootMark.bowlChance === 0.0035 && lootMark.riceHeal === 20 && lootMark.armorMax === 30 && lootMark.starterArmor === 20,
   `实际 ${JSON.stringify(lootMark)}`);
 check('掉落概率极低且饭盆更稀有', !!lootMark && lootMark.bowlChance < lootMark.riceChance);
 
@@ -90,7 +90,8 @@ await page.evaluate((bowl) => { window.__DROP_RNG = () => bowl / 2; }, lootMark.
 let pos = await killEnemy('bowl');
 check('击杀后受控掉落饭盆', !pos.err, JSON.stringify(pos));
 let st = await readState();
-check('初始无护甲', st.armor === 0 && !st.hasBowl && !st.bowlVisible);
+check('开局自带护盾 20/30（饭盆头可见）', st.armor === 20 && st.hasBowl && st.bowlVisible === true,
+  `armor=${st.armor} bowl=${st.bowlVisible}`);
 if (!pos.err) await moveToDrop(pos);
 st = await readState();
 check('拾取饭盆 → 护甲 30 + 饭盆头显示', st.armor === 30 && st.hasBowl && st.bowlVisible === true,
@@ -105,7 +106,7 @@ const hit1 = await page.evaluate(() => {
   s.player.takeDamage(10);
   return { armor: s.player.armor.armor, hp: s.player.stats.hp, bowl: s.player.bowlSpr.visible };
 });
-check('受击 10 优先扣甲：HP 不变、护甲 20', hit1.armor === 20 && hit1.hp === 100, `armor=${hit1.armor} hp=${hit1.hp}`);
+check('受击 10 优先扣甲：HP 不变、护甲 20（拾取后 30→20）', hit1.armor === 20 && hit1.hp === 100, `armor=${hit1.armor} hp=${hit1.hp}`);
 await page.waitForTimeout(120);   // 等 HUD 下一帧刷新
 const hudAfterHit = await page.evaluate(() => window.__game.scene.getScene('Game').hud.armorText.text);
 check('HUD 护甲条更新为 20/30', /护甲 20 \/ 30/.test(hudAfterHit), hudAfterHit);
@@ -207,7 +208,7 @@ const shots = fs.existsSync(OUT) ? fs.readdirSync(OUT).filter(f => f.endsWith('.
 console.log('本轮截图:', shots.slice(-6).join(', '));
 await browser.close();
 
-console.log('\n===== v0.9.0 新玩法验收 ====');
+console.log('\n===== v0.11.0 新玩法验收 ====');
 let allPass = true;
 for (const [name, ok, detail] of results) {
   console.log(`${ok ? '✔' : '✘'} ${name}`);

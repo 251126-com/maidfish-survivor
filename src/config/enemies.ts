@@ -1,33 +1,55 @@
-// 敌人配置表：蓝色大肥鱼家族
+// 敌人配置表：蓝色大肥鱼家族 + v0.11.0 深海小怪
 // v0.10.0: Boss 血量固定不随 elapsed 缩放（Boss 是节奏事件，不是刷怪），提前到 150s 时玩家仍有可击败性。
+// v0.11.0: 新增两种带独立移动模式的深海小怪：
+//   - jelly  水母：慢速漂浮 + 周期性「麻痹圈」（预警蓄圈后炸一圈，命中=伤害+减速）
+//   - lantern 灯笼鱼：平时慢速逼近，每隔几秒朝玩家当前位置直线冲刺一段
 export interface EnemyDef {
   id: string;
   name: string;
   texture: string;   // Boot 里生成的占位纹理 key
   hp: number;
-  speed: number;     // px/s
+  speed: number;     // px/s（追踪/漂浮基准速度）
   damage: number;    // 碰到玩家的伤害
   xp: number;        // 击杀经验
   goldChance: number;// 掉金币概率
   radius: number;    // 碰撞半径
   scale: number;     // 贴图缩放
+  move?: 'chase' | 'float' | 'dash';  // v0.11.0 移动模式：默认 chase（直线追踪）
+  // 水母麻痹圈：interval 间隔 / telegraph 预警时长 / radius 圈半径 / damage 命中伤害
+  aura?: { interval: number; telegraph: number; radius: number; damage: number; slowFactor: number; slowDur: number };
+  // 灯笼鱼冲刺：cd 冲刺间隔 / dur 冲刺持续 / speed 冲刺速度
+  dash?: { cd: number; dur: number; speed: number };
 }
 
 export const ENEMIES: Record<string, EnemyDef> = {
   fish: {
     id: 'fish', name: '小蓝鱼', texture: 'enemy_fish',
-    hp: 18, speed: 78, damage: 8, xp: 2, goldChance: 0.15, radius: 16, scale: 1
+    hp: 18, speed: 78, damage: 8, xp: 3, goldChance: 0.15, radius: 16, scale: 1
   },
   dart: {
     id: 'dart', name: '疾行鱼', texture: 'enemy_dart',
-    hp: 15, speed: 170, damage: 6, xp: 3, goldChance: 0.2, radius: 12, scale: 0.85
+    hp: 15, speed: 170, damage: 6, xp: 4, goldChance: 0.2, radius: 12, scale: 0.85
   },
   fat: {
     id: 'fat', name: '肥鱼', texture: 'enemy_fat',
-    hp: 60, speed: 50, damage: 15, xp: 7, goldChance: 0.5, radius: 26, scale: 1.4
+    hp: 60, speed: 50, damage: 15, xp: 9, goldChance: 0.5, radius: 26, scale: 1.4
+  },
+  // v0.11.0 水母：漂浮逼近，周期性停下蓄「麻痹圈」
+  jelly: {
+    id: 'jelly', name: '水母', texture: 'enemy_jelly',
+    hp: 30, speed: 42, damage: 8, xp: 6, goldChance: 0.25, radius: 20, scale: 1,
+    move: 'float',
+    aura: { interval: 4.2, telegraph: 1.1, radius: 130, damage: 10, slowFactor: 0.5, slowDur: 1.6 }
+  },
+  // v0.11.0 灯笼鱼：慢速逼近 + 周期直线冲刺
+  lantern: {
+    id: 'lantern', name: '灯笼鱼', texture: 'enemy_lantern',
+    hp: 26, speed: 70, damage: 9, xp: 6, goldChance: 0.25, radius: 15, scale: 1,
+    move: 'dash',
+    dash: { cd: 4.5, dur: 0.55, speed: 520 }
   },
   boss: {
     id: 'boss', name: '蓝色大肥鱼王', texture: 'enemy_boss',
-    hp: 2200, speed: 42, damage: 20, xp: 60, goldChance: 1, radius: 60, scale: 3
+    hp: 2200, speed: 42, damage: 20, xp: 80, goldChance: 1, radius: 60, scale: 3
   }
 };

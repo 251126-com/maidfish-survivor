@@ -30,8 +30,23 @@ export class Enemy implements Poolable {
   def!: EnemyDef;
   sprite!: Phaser.GameObjects.Image;
   flash = 0;
+  // v0.11.0 特殊敌人行为状态（spawn 时由 EnemySystem 按 def 初始化）
+  move: 'chase' | 'float' | 'dash' = 'chase';
+  auraT = 0;            // 水母：距下次麻痹圈开始的倒计时
+  auraState: 0 | 1 = 0; // 0=待机 1=蓄圈预警中（站定）
+  auraRemain = 0;       // 蓄圈预警剩余秒
+  auraResolve = false;  // 本帧圈已蓄满，等待场景结算（伤害/减速）
+  dashT = 0;            // 灯笼鱼：距下次冲刺倒计时
+  dashTimer = 0;        // 冲刺进行中剩余秒
+  dashVX = 0;
+  dashVY = 0;
+  dashActive = false;
 
-  spawn(): void { this.flash = 0; this.orbitCd = 0; this.knockX = 0; this.knockY = 0; }
+  spawn(): void {
+    this.flash = 0; this.orbitCd = 0; this.knockX = 0; this.knockY = 0;
+    this.auraState = 0; this.auraRemain = 0; this.auraResolve = false;
+    this.dashTimer = 0; this.dashVX = 0; this.dashVY = 0; this.dashActive = false;
+  }
   despawn(): void { this.sprite.setVisible(false); }
 }
 
@@ -74,6 +89,11 @@ export class EnemySystem {
     e.goldChance = def.goldChance;
     e.isBoss = def.id === 'boss';
 
+    // v0.11.0 特殊敌人行为初始化（随机错开节奏，避免全场同步蓄圈/冲刺）
+    e.move = def.move ?? 'chase';
+    e.auraT = def.aura ? def.aura.interval * (0.6 + Math.random() * 0.6) : 0;
+    e.dashT = def.dash ? def.dash.cd * (0.5 + Math.random() * 0.5) : 0;
+
     e.sprite.setTexture(def.texture);
     e.sprite.setScale(def.scale);
     e.sprite.setPosition(x, y);
@@ -95,7 +115,7 @@ export class EnemySystem {
     for (let i = 0; i < live.length; i++) {
       const e = live[i];
 
-      // 朝玩家移动
+      // 朝玩家方向单位向量（水母/灯笼鱼在其非特殊阶段也复用）
       const dx = px - e.x;
       const dy = py - e.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -121,10 +141,66 @@ export class EnemySystem {
       }
       mx += sx * this.separationWeight;
       my += sy * this.separationWeight;
-
       const ml = Math.hypot(mx, my) || 1;
-      e.x += (mx / ml) * e.speed * dt;
-      e.y += (my / ml) * e.speed * dt;
+
+      // v0.11.0 移动模式：chase 直线追踪 / float 漂浮+蓄圈站定 / dash 慢速逼近+周期冲刺
+      let mvx = 0, mvy = 0;
+      if (e.move === 'float') {
+        // 水母：蓄圈预警时站定不动，其余时间以基准速度漂浮逼近
+        if (e.auraState !== 1) {
+          mvx = (mx / ml) * e.speed * dt;
+          mvy = (my / ml) * e.speed * dt;
+        }
+      } else if (e.move === 'dash') {
+        // 灯笼鱼：冲刺中沿固定方向高速直线；否则慢速追踪
+        if (e.dashActive) {
+          e.dashTimer -= dt;
+          mvx = e.dashVX * dt;
+          mvy = e.dashVY * dt;
+          if (e.dashTimer <= 0) {
+            e.dashActive = false;
+            e.dashT = (e.def.dash?.cd ?? 4.5) * (0.8 + Math.random() * 0.4);
+          }
+        } else {
+          e.dashT -= dt;
+          if (e.dashT <= 0) {
+            // 起冲：朝玩家当前位置锁定直线方向（预警/实际路径一致，玩家可提前侧移）
+            const l = Math.hypot(dx, dy) || 1;
+            const sp = e.def.dash?.speed ?? 520;
+            e.dashVX = (dx / l) * sp;
+            e.dashVY = (dy / l) * sp;
+            e.dashActive = true;
+            e.dashTimer = e.def.dash?.dur ?? 0.55;
+          } else {
+            mvx = (mx / ml) * e.speed * dt;
+            mvy = (my / ml) * e.speed * dt;
+          }
+        }
+      } else {
+        mvx = (mx / ml) * e.speed * dt;
+        mvy = (my / ml) * e.speed * dt;
+      }
+      e.x += mvx;
+      e.y += mvy;
+
+      // v0.11.0 水母麻痹圈计时：蓄圈完成置 auraResolve 标记，由 GameScene 结算伤害/减速
+      if (e.def.aura) {
+        if (e.auraState === 1) {
+          e.auraRemain -= dt;
+          if (e.auraRemain <= 0) {
+            e.auraState = 0;
+            e.auraT = e.def.aura.interval;
+            e.auraResolve = true;
+          }
+        } else {
+          e.auraT -= dt;
+          if (e.auraT <= 0) {
+            e.auraState = 1;
+            e.auraRemain = e.def.aura.telegraph;
+          }
+        }
+      }
+
       // v0.10.0 击退：独立于追踪，指数衰减（时间常数 ~0.35s），Boss 不受击退
       if (e.knockX !== 0 || e.knockY !== 0) {
         const kf = Math.exp(-6.5 * dt);

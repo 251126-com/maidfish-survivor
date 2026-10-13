@@ -24,7 +24,6 @@ import { BackgroundLayer } from '../game/backgroundLayer.ts';
 import { LevelSystem, rollUpgradeOptions, type UpgradeOption } from '../game/levelUp.ts';
 import { shakeForEvent } from '../game/feel.ts';
 import { DeathFx } from '../game/deathFx.ts';
-import { KillStreak } from '../game/killStreak.ts';
 import { hitStopSpec } from '../game/hitStop.ts';
 import { Hud } from '../ui/hud.ts';
 import { LevelUpPanel } from '../ui/levelUpPanel.ts';
@@ -75,10 +74,11 @@ export class GameScene extends Phaser.Scene {
   private enemyBullets: EnemyBulletSystem | null = null;
   private bossTeleG: Phaser.GameObjects.Graphics | null = null;
   private bossBannerText: Phaser.GameObjects.Text | null = null;
+  // v0.11.0 水母麻痹圈绘制层（深度在敌人之上、子弹之下）
+  private jellyTeleG: Phaser.GameObjects.Graphics | null = null;
   private waveBannerText: Phaser.GameObjects.Text | null = null;
-  // v0.10.0 打击感：死亡粒子 / 连杀 / 顿帧
+  // v0.10.0 打击感：死亡粒子 / 顿帧（v0.11.0 移除连杀横幅与里程碑顿帧）
   private deathFx!: DeathFx;
-  private streak!: KillStreak;
   private hitStopScale = 1;      // v0.10.0 顿帧当前时间缩放（大事件短暂放慢）
   private hitStopUntil = 0;      // v0.10.0 顿帧结束墙钟时间戳（真实时间，防卡死）
   private paused = false;
@@ -150,6 +150,7 @@ export class GameScene extends Phaser.Scene {
     // v0.9.0 Boss 弹幕池 + 预警绘制层（深度高于敌人、低于弹幕/角色特效）
     this.enemyBullets = new EnemyBulletSystem(this);
     this.bossTeleG = this.add.graphics().setDepth(15);
+    this.jellyTeleG = this.add.graphics().setDepth(14);
 
     this.weapons = new WeaponSystem(this);
     this.weapons.addWeapon('rifle');   // 默认武器
@@ -161,7 +162,6 @@ export class GameScene extends Phaser.Scene {
     this.drops = new DropSystem(this);
     // v0.10.0 打击感系统：击杀爆散粒子 + 连杀计数
     this.deathFx = new DeathFx(this);
-    this.streak = new KillStreak(3.0);
     this.drops.onPickup = (kind, value) => {
       if (kind === 'xp') {
         this.levelSys.addXp(value, this.stats.xpMult);
@@ -170,15 +170,15 @@ export class GameScene extends Phaser.Scene {
         this.gold += value;
         sfx.coin();
       } else if (kind === 'rice') {
-        // 大白饭：回血并钳制到最大 HP，给出实际回复量反馈
+        // 大白饭：回血并钳制到最大 HP，浮字明确显示物品名与回血数值（v0.11.0）
         const healed = this.player.heal(RICE_HEAL);
         sfx.pickup();
-        this.showPickupFeedback(`+${Math.round(healed)} 生命`, 0x7fe8a0);
+        this.showPickupFeedback(`大白饭 回血+${Math.round(healed)}`, 0x7fe8a0);
       } else if (kind === 'bowl') {
-        // 饭盆：获得/刷新 30 护甲；已满则提示（不叠加超上限）
+        // 铁盆：获得/刷新 30 护甲；已满则提示（不叠加超上限）
         const st = this.player.gainArmor();
         sfx.pickup();
-        this.showPickupFeedback(st === 'full' ? '护甲已满' : '护甲 +30', 0x6fb8ff);
+        this.showPickupFeedback(st === 'full' ? '铁盆 护甲已满' : `铁盆 护甲+${ARMOR_MAX}`, 0x6fb8ff);
       }
     };
 
@@ -297,9 +297,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.collideEnemyPlayer();
+    // v0.11.0 水母麻痹圈：绘制蓄圈 + 结算命中伤害/减速
+    this.updateJellyAuras();
     this.drops.update(dt, this.player);
-    // v0.10.0：连杀窗口衰减 + 击杀粒子更新（纯对象池，量少）
-    this.streak.tick(dt);
+    // v0.10.0：击杀粒子更新（纯对象池，量少；v0.11.0 移除连杀窗口）
     this.deathFx.update(dt);
     this.updateSpawner(dt);
     this.checkLevelUp();
@@ -351,6 +352,50 @@ export class GameScene extends Phaser.Scene {
     this.pauseOverlay?.setVisible(this.paused && showOverlay);
     this.pauseLabel?.setVisible(this.paused && showOverlay);
     if (this.paused) this.inputSys.reset();   // 暂停时清掉摇杆，避免恢复时残留
+  }
+
+
+  // —— v0.11.0 水母麻痹圈 ——
+  // 每帧：给蓄圈中的水母画渐大红圈（纯视觉预警），蓄满瞬间结算——圈内玩家受伤害 + 短暂减速。
+  private updateJellyAuras(): void {
+    const g = this.jellyTeleG;
+    if (!g) return;
+    g.clear();
+    const live = this.enemies.live;
+    for (let i = 0; i < live.length; i++) {
+      const e = live[i];
+      if (!e.active || !e.def.aura) continue;
+      if (e.auraState === 1) {
+        const aura = e.def.aura;
+        const prog = 1 - Phaser.Math.Clamp(e.auraRemain / Math.max(0.001, aura.telegraph), 0, 1);
+        const r = Math.max(6, aura.radius * prog);
+        g.fillStyle(0xff5a4d, 0.08 + 0.10 * prog);
+        g.fillCircle(e.x, e.y, r);
+        g.lineStyle(3, 0xff7a4d, 0.5 + 0.4 * prog);
+        g.strokeCircle(e.x, e.y, r);
+      }
+      if (e.auraResolve) {
+        e.auraResolve = false;
+        const aura = e.def.aura;
+        const dx = this.player.x - e.x;
+        const dy = this.player.y - e.y;
+        if (Math.hypot(dx, dy) < aura.radius + this.player.radius) {
+          this.hurtPlayer(aura.damage, e.x, e.y);
+          this.player.applySlow(aura.slowDur, aura.slowFactor);
+          this.showPickupFeedback('麻痹 减速！', 0xb04dff);
+        }
+      }
+    }
+  }
+
+  // 统一受击反馈：伤害 + 音效 + 震屏 + 红晕（v0.11.0 抽出供水母圈复用）
+  private hurtPlayer(dmg: number, fromX: number, fromY: number): void {
+    if (!this.player.takeDamage(dmg, fromX, fromY)) return;
+    sfx.hurt();
+    vibrate([70, 40, 70]);
+    const st = shakeForEvent('hurt');
+    this.cameras.main.shake(st.duration, st.intensity);
+    this.flashHurt();
   }
 
   private updateSpawner(dt: number): void {
@@ -494,7 +539,7 @@ export class GameScene extends Phaser.Scene {
   private handleBossEvent(ev: BossEvent, brain: BossBrain, be: Enemy): void {
     switch (ev.type) {
       case 'phase-change':
-        this.showBossBanner(`Boss 狂暴 · 阶段 ${ev.phase + 1}/3`, '#ff6b5a');
+        // v0.11.0: 移除「Boss 狂暴·阶段x/3」文字横幅；阶段仍以 Boss 光晕变色 + HUD 血条阶段文字体现
         this.cameras.main.shake(240, 0.008);
         vibrate([60, 40, 60]);
         break;
@@ -507,11 +552,9 @@ export class GameScene extends Phaser.Scene {
         this.bossTeleG?.clear();
         this.showCancelFeedback(be.x, be.y);
         break;
-      case 'telegraph-start': {
-        const names: Record<string, string> = { dash: '预警：冲刺！', spread: '预警：扇弹！', circle: '预警：红圈！' };
-        if (ev.skill) this.showBossBanner(names[ev.skill] ?? '', '#ffd447');
+      case 'telegraph-start':
+        // v0.11.0: 移除「预警：冲刺！」等技能文字播报；预警表现仍完整（红色直线/聚能/红圈由 drawBossTelegraph 绘制）
         break;
-      }
       case 'act-start': {
         const p = ev.params;
         if (!p) break;
@@ -703,15 +746,7 @@ export class GameScene extends Phaser.Scene {
     vibrate(25);
     // v0.10.0 击杀爆散：按敌人类型(鱼5/疾行5/肥鱼10/Boss30)池化粒子，克制数量保帧率
     this.deathFx.burst(e.x, e.y, e.def.id);
-    // v0.10.0 连杀：3s 窗口累计，每 5 连杀一次里程碑（横幅+顿帧+轻震），鼓励连续击杀
-    const streakCount = this.streak.add();
-    if (this.streak.isMilestone(5)) {
-      const color = streakCount >= 20 ? '#ffd447' : streakCount >= 10 ? '#8ef0b8' : '#9fe8ff';
-      this.showWaveBanner(`${streakCount} 连杀！`, color);
-      this.doHitStop('milestone');
-      vibrate([40, 60, 40]);
-      this.cameras.main.shake(120, 0.006);
-    }
+    // v0.11.0: 连杀横幅与里程碑顿帧已移除（去掉通报），仅保留击杀计数/爆散/音效。
     this.drops.spawn(e.x, e.y, 'xp', e.xp);
     if (Math.random() < e.goldChance) this.drops.spawn(e.x, e.y, 'gold', 1);
     // 特殊掉落：极低概率的大白饭/饭盆（默认 1.5% / 0.35%，见 balance.ts）

@@ -1,9 +1,9 @@
 // 数值配置测试：经验曲线单调、刷怪时间轴选段正确、权重选取不越界
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { xpNeed, hpScale, speedScale, POOL_LIMIT, BOSS_TIME, BOSS_WARN_TIME } from './balance.ts';
+import { xpNeed, hpScale, speedScale, POOL_LIMIT, BOSS_TIME, BOSS_WARN_TIME, STARTER_ARMOR, ARMOR_MAX } from './balance.ts';
 import { currentPhase, pickEnemy, SPAWN_TIMELINE, WAVE_EVENTS } from './timeline.ts';
-import { WEAPONS } from './weapons.ts';
+import { WEAPONS, OBTAINABLE_WEAPONS } from './weapons.ts';
 import { ENEMIES } from './enemies.ts';
 
 test('经验曲线随等级严格递增', () => {
@@ -44,6 +44,24 @@ test('v0.10: 前 60s 刷怪节奏变密（间隔从 1100ms 提速），但 0s �
   const t60 = currentPhase(59).fromSec;
   assert.ok(t60 <= 60, `60s 时应已进入更密阶段，当前 ${t60}s`);
   assert.ok(currentPhase(59).intervalMs < 800, `60s 附近间隔应已提速，当前 ${currentPhase(59).intervalMs}ms`);
+});
+
+test('v0.10 finetune: 前60s同屏上限收紧，30s 前后不再被 40+ 敌群淹没', () => {
+  const early = SPAWN_TIMELINE.filter(p => p.fromSec < 60);
+  for (const p_ of early) {
+    assert.ok(p_.maxAlive <= 90, `前60s阶段 ${p_.fromSec}s maxAlive=${p_.maxAlive} 应≤90`);
+  }
+  assert.ok(SPAWN_TIMELINE[0].maxAlive < 18, '开局同屏上限应低于 v0.10.0 初版的 18');
+  // 第2/3波不应再瞬间灌入疾行鱼（dart 移速 170，太早入场不公平）
+  const w2 = WAVE_EVENTS.find(w => w.atSec === 24);
+  const w3 = WAVE_EVENTS.find(w => w.atSec === 42);
+  assert.ok(w2 && w2.burst.find(b => b[0] === 'dart')?.[1] === 1, '24s 波 dart 应压到 1 只');
+  assert.ok(w3 && w3.burst.find(b => b[0] === 'dart')?.[1] === 2, '42s 波 dart 应压到 2 只');
+});
+
+test('v0.10 finetune: 开局自带半份饭盆护盾（20/30），拾取仍可补满', () => {
+  assert.ok(STARTER_ARMOR > 0 && STARTER_ARMOR < ARMOR_MAX,
+    `开局护盾 ${STARTER_ARMOR} 应在 (0, ${ARMOR_MAX}) 区间`);
 });
 
 test('敌人成长曲线随时间递增且有上限', () => {
@@ -90,4 +108,39 @@ test('池上限为正整数', () => {
   for (const [k, v] of Object.entries(POOL_LIMIT)) {
     assert.ok(Number.isInteger(v) && v > 0, `${k} 上限非法`);
   }
+});
+
+// ---------- v0.11.0 新增内容：深海小怪 / 霰弹枪 / 经验提速 ----------
+
+test('v0.11: 新增水母与灯笼鱼，各自有独立移动模式与行为配置', () => {
+  const jelly = ENEMIES['jelly'];
+  const lantern = ENEMIES['lantern'];
+  assert.ok(jelly, '水母必须在敌人表');
+  assert.ok(lantern, '灯笼鱼必须在敌人表');
+  assert.equal(jelly.move, 'float', '水母应是漂浮移动');
+  assert.ok(jelly.aura && jelly.aura.interval > 0 && jelly.aura.telegraph > 0 && jelly.aura.radius > 0,
+    '水母必须有麻痹圈参数');
+  assert.equal(lantern.move, 'dash', '灯笼鱼应是冲刺移动');
+  assert.ok(lantern.dash && lantern.dash.cd > 0 && lantern.dash.dur > 0 && lantern.dash.speed > 0,
+    '灯笼鱼必须有冲刺参数');
+  assert.ok(jelly.xp > 0 && lantern.xp > 0, '新敌人击杀应有经验');
+});
+
+test('v0.11: 霰弹枪进升级池（可获取武器且非进化），数值不倒退', () => {
+  const sg = WEAPONS['shotgun'];
+  assert.ok(sg, '霰弹枪必须在武器表');
+  assert.ok(OBTAINABLE_WEAPONS.includes(sg) || OBTAINABLE_WEAPONS.some(w => w.id === 'shotgun'),
+    '霰弹枪必须是可获取武器（非进化）');
+  assert.equal(sg.levels.length, sg.maxLevel);
+  for (let i = 1; i < sg.levels.length; i++) {
+    assert.ok(sg.levels[i].damage >= sg.levels[i - 1].damage, '霰弹枪伤害不应倒退');
+    assert.ok(sg.levels[i].cooldown <= sg.levels[i - 1].cooldown, '霰弹枪冷却不应变长');
+  }
+  assert.ok(sg.levels[0].count >= 5, '霰弹枪应多弹丸（扇形）');
+  assert.ok(sg.levels[0].spread && sg.levels[0].spread > 0.14, '霰弹枪扇形间隔应大于默认步枪');
+  assert.ok(sg.levels[0].life && sg.levels[0].life < 1, '霰弹枪应有短寿命=短射程');
+});
+
+test('v0.11: 首次升级门槛降到 ~13（开局 15~20s 内升级）', () => {
+  assert.ok(xpNeed(1) <= 14, `首次升级门槛 ${xpNeed(1)} 应≤14`);
 });

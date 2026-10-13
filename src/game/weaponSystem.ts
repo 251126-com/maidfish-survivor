@@ -137,7 +137,7 @@ export class WeaponSystem {
     if (w.def.id === 'sniper' || w.def.id === 'railgun' || w.def.id === 'fatfishCannon') sfx.sniper();
     else sfx.shoot();
     const baseAngle = Math.atan2(target.y - player.y, target.x - player.x);
-    const spread = 0.14;   // 多发时的扇形间隔
+    const spread = s.spread ?? 0.14;   // 多发时的扇形间隔（v0.11.0 霰弹枪更宽）
     for (let i = 0; i < s.count; i++) {
       const offset = s.count > 1 ? (i - (s.count - 1) / 2) * spread : 0;
       const a = baseAngle + offset;
@@ -149,9 +149,11 @@ export class WeaponSystem {
       b.vy = Math.sin(a) * s.speed;
       b.damage = s.damage * player.stats.damageMult;
       b.pierce = s.pierce;
-      b.radius = w.def.id === 'sniper' ? 10 : (s.splash ? 12 : 6);
+      b.radius = w.def.id === 'sniper' ? 10 : w.def.id === 'shotgun' ? 5 : (s.splash ? 12 : 6);
       b.isSniper = w.def.id === 'sniper';
       b.splash = s.splash ?? 0;
+      // v0.11.0 短射程武器（霰弹枪）：寿命按射程折算，弹丸不会飘出扇形射程太远
+      b.life = s.life ?? 2;
       b.sprite.setTexture(b.isSniper ? 'bullet_sniper' : (s.splash ? 'bullet_cannon' : 'bullet'));
       b.sprite.setPosition(b.x, b.y);
       b.sprite.setRotation(a);

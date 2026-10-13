@@ -25,11 +25,12 @@ export const PLAYER_BASE = {
   xpMult: 1.0        // 经验倍率
 };
 
-// 升级所需经验：need(level) = floor(4 + level*9 + level^2 * 1.5)
-// v0.10.0: 前几级门槛下调约 20%（17→14、33→28…），配合开局波次让首次升级出现在 ~20s 内。
-// 后段增速放缓（level^2 系数 2→1.5），避免中期升级越来越漫长导致成长反馈断裂。
+// 升级所需经验：need(level) = floor(4 + level*8 + level^2 * 1.2)
+// v0.11.0: 首次升级门槛再降到 13（v0.10 为 14）、2级 24、3级 38——
+// 配合 3xp/只的击杀经验与开局波次，首次升级稳定落在 15~20s；前 2 分钟连升数级成长感明显。
+// 后段增速放缓（level^2 系数 1.2），避免中期升级越来越漫长导致成长反馈断裂。
 export function xpNeed(level: number): number {
-  return Math.floor(4 + level * 9 + level * level * 1.5);
+  return Math.floor(4 + level * 8 + level * level * 1.2);
 }
 
 // 性能预算：硬上限，超出不再生成（对象池会复用）
@@ -56,3 +57,6 @@ export const RICE_DROP_CHANCE = 0.015;    // 打怪掉大白饭概率
 export const BOWL_DROP_CHANCE = 0.0035;   // 打怪掉饭盆概率（更稀有）
 export const RICE_HEAL = 20;              // 拾取大白饭回复生命
 export const ARMOR_MAX = 30;              // 饭盆护甲上限/耐久
+// v0.10.0 开局护盾：新对局自带 20 点护甲（半份饭盆）。
+// 前 60s 容错——30s 前后不再一被围就快速掉光 HP；拾取饭盆仍可补满到 ARMOR_MAX。
+export const STARTER_ARMOR = 20;

@@ -10,7 +10,7 @@ import { sfx } from './core/audio.ts';
 import { isFullscreen, uaKind, toggleFullscreen, requestFullscreenAsync, type FsRequest } from './core/fullscreen.ts';
 import { VERSION } from './config/version.ts';
 import { BG_ORDER, BG_SWITCH_SEC } from './config/background.ts';
-import { RICE_DROP_CHANCE, BOWL_DROP_CHANCE, RICE_HEAL, ARMOR_MAX } from './config/balance.ts';
+import { RICE_DROP_CHANCE, BOWL_DROP_CHANCE, RICE_HEAL, ARMOR_MAX, STARTER_ARMOR } from './config/balance.ts';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,          // 优先 WebGL，不支持自动降级 Canvas
@@ -39,7 +39,7 @@ const dbg = window as unknown as {
   __VERSION: string;
   __BG_MARK: { version: string; count: number; keys: string[]; names: string[]; switchSec: number };
   __BG_STATE: { version: string; activeIndex: number; activeKey: string; activeName: string; };
-  __LOOT_MARK: { version: string; riceChance: number; bowlChance: number; riceHeal: number; armorMax: number };
+  __LOOT_MARK: { version: string; riceChance: number; bowlChance: number; riceHeal: number; armorMax: number; starterArmor: number };
   // E2E/调试钩子：注入 __DROP_RNG 可受控掷特殊掉落（未设置时用 Math.random）
   __DROP_RNG?: () => number;
 };
@@ -62,7 +62,8 @@ dbg.__LOOT_MARK = {
   riceChance: RICE_DROP_CHANCE,
   bowlChance: BOWL_DROP_CHANCE,
   riceHeal: RICE_HEAL,
-  armorMax: ARMOR_MAX
+  armorMax: ARMOR_MAX,
+  starterArmor: STARTER_ARMOR
 };
 // ---------- v0.9.0 全屏适配（必须在用户手势内调用 Fullscreen API） ----------
 //  - fullscreenchange / webkitfullscreenchange → game.scale.refresh() 重算 FIT 布局

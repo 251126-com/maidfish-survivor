@@ -17,6 +17,11 @@ export class BootScene extends Phaser.Scene {
     });
     // 正式角色素材：用户设计图抠出的透明 PNG（保留白色头饰/围裙）
     this.load.image('player_whale', 'assets/player_whale.png');
+    // v0.11.0 素材接线：大白饭/铁盆拾取图标 + 角色饭盆头 overlay 全部改用授权 PNG，
+    // 不再走程序化占位（makeDrops/makeLoot 仅保留经验球/金币程序化生成）。
+    this.load.image('loot_rice', 'assets/loot_rice.png');
+    this.load.image('loot_bowl', 'assets/loot_bowl.png');
+    this.load.image('rice_bowl', 'assets/rice_bowl.png');
     // 四张授权背景（3840x2160 原图已处理为 1920x1080 JPEG 放 public/assets/bg）
     // 全部在启动场景并行预载，局内切换不产生任何加载抖动
     this.load.image('bg_moon', 'assets/bg/bg_moon.jpg');
@@ -32,7 +37,6 @@ export class BootScene extends Phaser.Scene {
     this.makeEnemies();
     this.makeProjectiles();
     this.makeDrops();
-    this.makeLoot();
     this.makePlayerFx();
     this.scene.start('Menu');
   }
@@ -42,6 +46,68 @@ export class BootScene extends Phaser.Scene {
     this.makeFish('enemy_dart', 28, 16, 0x2f7fd0, 0xa8d8ff, false);
     this.makeFish('enemy_fat', 44, 38, 0x3b8fe0, 0xe4f2ff, false);
     this.makeFish('enemy_boss', 64, 58, 0x2b6fc0, 0xd0e8ff, true);
+    // v0.11.0 深海小怪（程序化占位，后续换正式图集只换 key）
+    this.makeJelly('enemy_jelly');
+    this.makeLantern('enemy_lantern');
+  }
+
+  // 水母：半透明伞盖 + 四条波浪触手 + 体内斑点（蓝紫系，与蓝鱼区分）
+  private makeJelly(key: string): void {
+    const g = this.add.graphics();
+    // 伞盖
+    g.fillStyle(0x9a6ff0, 0.85);
+    g.fillEllipse(24, 12, 40, 22);
+    g.fillStyle(0xc9aef7, 0.6);
+    g.fillEllipse(24, 11, 30, 15);
+    // 触手（折线近似波浪）
+    g.lineStyle(3, 0xb48ef5, 0.9);
+    g.beginPath();
+    g.moveTo(14, 20); g.lineTo(10, 28); g.lineTo(17, 35); g.lineTo(15, 41);
+    g.moveTo(24, 22); g.lineTo(22, 30); g.lineTo(27, 37); g.lineTo(25, 43);
+    g.moveTo(34, 20); g.lineTo(38, 28); g.lineTo(31, 35); g.lineTo(34, 41);
+    g.strokePath();
+    // 斑点
+    g.fillStyle(0xe6dbff, 0.9);
+    g.fillCircle(18, 10, 3);
+    g.fillCircle(30, 9, 2.6);
+    g.fillCircle(24, 14, 2.2);
+    // 顶部小冠
+    g.fillStyle(0xc9aef7, 1);
+    g.fillCircle(24, 2, 5);
+    g.generateTexture(key, 48, 44);
+    g.destroy();
+  }
+
+  // 灯笼鱼：深色身体 + 头顶发光诱饵 + 光晕（深海暖光，轮廓清晰）
+  private makeLantern(key: string): void {
+    const g = this.add.graphics();
+    // 尾鳍
+    g.fillStyle(0x24486b, 1);
+    g.fillTriangle(3, 12, 12, 6, 12, 18);
+    // 身体
+    g.fillStyle(0x2e5577, 1);
+    g.fillEllipse(22, 12, 28, 16);
+    g.fillStyle(0x3d6a90, 0.85);
+    g.fillEllipse(23, 13, 17, 9);
+    // 眼睛
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(31, 9, 3.4);
+    g.fillStyle(0x101c2c, 1);
+    g.fillCircle(32, 9.6, 1.7);
+    // 嘴巴（利齿感）
+    g.fillStyle(0xfff2e6, 1);
+    g.fillTriangle(34, 15, 38, 14, 36, 17);
+    // 头顶诱饵杆 + 发光球 + 光晕
+    g.lineStyle(2, 0x24486b, 1);
+    g.beginPath(); g.moveTo(20, 3); g.lineTo(14, 0); g.lineTo(9, -4); g.strokePath();
+    g.fillStyle(0xffe066, 0.25);
+    g.fillCircle(9, -6, 7);
+    g.fillStyle(0xffd447, 1);
+    g.fillCircle(9, -6, 3.4);
+    g.fillStyle(0xfffbe0, 1);
+    g.fillCircle(9, -6, 1.6);
+    g.generateTexture(key, 42, 26);
+    g.destroy();
   }
 
   // 蓝色大肥鱼（面朝右）：尾鳍 + 椭圆身体 + 白肚皮 + 眼睛 + 王冠
@@ -142,6 +208,8 @@ export class BootScene extends Phaser.Scene {
     g.destroy();
   }
 
+  // v0.11.0：大白饭/饭盆拾取贴图改为正式 PNG（loot_rice/loot_bowl），
+  // 此处仅保留仍为程序化的经验球与金币占位。
   private makeDrops(): void {
     // 经验球：青绿小方块
     let g = this.add.graphics();
@@ -159,66 +227,6 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0xfff3b0, 1);
     g.fillCircle(6, 6, 3);
     g.generateTexture('gem_gold', 16, 16);
-    g.destroy();
-
-    // 大白饭（拾取回血）：小碗 + 白饭堆
-    g = this.add.graphics();
-    g.fillStyle(0xe8eef4, 1);
-    g.fillEllipse(10, 13, 16, 7);
-    g.fillStyle(0xd6e4f0, 1);
-    g.fillEllipse(10, 12, 15, 6);
-    g.fillStyle(0xffffff, 1);
-    g.fillCircle(10, 8, 6.5);
-    g.fillStyle(0xf2ecdc, 0.9);
-    g.fillCircle(8, 7, 2);
-    g.fillCircle(12, 9, 1.6);
-    g.generateTexture('loot_rice', 20, 18);
-    g.destroy();
-
-    // 饭盆（拾取护甲）：宽脸盆 + 白饭堆
-    g = this.add.graphics();
-    g.fillStyle(0xb8cfe0, 1);
-    g.fillEllipse(11, 15, 22, 9);
-    g.fillStyle(0xe6f1fa, 1);
-    g.fillEllipse(11, 13, 20, 8);
-    g.fillStyle(0xffffff, 1);
-    g.fillCircle(11, 9, 7);
-    g.fillStyle(0xf2ecdc, 0.9);
-    g.fillCircle(9, 8, 2);
-    g.fillCircle(13, 10, 1.8);
-    g.generateTexture('loot_bowl', 22, 20);
-    g.destroy();
-  }
-
-  // 程序化「大白饭饭盆」：角色有护甲时头顶的 overlay（跟随翻面/动作）
-  private makeLoot(): void {
-    const g = this.add.graphics();
-
-    // 盆身（脸盆）：浅蓝灰半椭球 + 盆沿
-    g.fillStyle(0x9fb8cc, 1);
-    g.fillEllipse(36, 50, 64, 16);
-    g.fillStyle(0xcfe0ee, 1);
-    g.fillEllipse(36, 48, 60, 14);
-    g.fillStyle(0xeaf4fc, 1);
-    g.fillEllipse(36, 46, 56, 11);
-    g.lineStyle(2.5, 0x8aa7bd, 1);
-    g.strokeEllipse(36, 50, 64, 16);
-
-    // 大白饭堆：高出盆沿的白色饭团 + 阴影 + 米粒高光
-    g.fillStyle(0xeae2d0, 0.9);
-    g.fillEllipse(36, 44, 50, 12);
-    g.fillStyle(0xffffff, 1);
-    g.fillCircle(36, 30, 20);
-    g.fillStyle(0xfffdf6, 1);
-    g.fillEllipse(36, 34, 44, 18);
-    g.fillStyle(0xf2ecdc, 0.85);
-    g.fillCircle(30, 24, 2.6);
-    g.fillCircle(43, 22, 2.1);
-    g.fillCircle(36, 28, 1.8);
-    g.fillCircle(26, 32, 1.6);
-    g.fillCircle(46, 33, 1.8);
-
-    g.generateTexture('rice_bowl', 72, 64);
     g.destroy();
   }
 

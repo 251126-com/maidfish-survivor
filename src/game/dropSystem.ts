@@ -17,6 +17,11 @@ const LOOT_TEXTURE: Record<LootKind, string> = {
   bowl: 'loot_bowl'
 };
 
+// v0.11.0 素材接线：正式 PNG 为 64x64（原程序化占位仅 ~20px），
+// 按掉落类型做等比缩小显示（64*0.42≈27px 大白饭、64*0.45≈29px 铁盆），
+// 只缩放不平铺拉伸，保持图标比例。
+const LOOT_SCALE: Record<LootKind, number> = { xp: 1, gold: 1, rice: 0.42, bowl: 0.45 };
+
 export class Gem implements Poolable {
   active = false;
   x = 0; y = 0;
@@ -73,11 +78,12 @@ export class DropSystem {
     g.sprite.setTexture(LOOT_TEXTURE[kind] ?? 'gem_xp');
     g.sprite.setPosition(x, y);
     g.sprite.setVisible(true);
-    // 出场弹跳放大（复用池对象也重新播放）
-    g.sprite.setScale(0.4);
+    // 出场弹跳放大（复用池对象也重新播放）；目标缩放按掉落类型（大白饭/铁盆 PNG 等比缩小）
+    const target = LOOT_SCALE[kind] ?? 1;
+    g.sprite.setScale(target * 0.4);
     this.scene.tweens.add({
       targets: g.sprite,
-      scale: 1,
+      scale: target,
       duration: 120,
       ease: 'Back.easeOut'
     });

@@ -24,7 +24,7 @@ await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 const ver = await page.evaluate(() => window.__VERSION ?? null);
 console.log('   版本标记:', ver);
-const verOk = ver === '0.9.0';
+const verOk = ver === '0.11.0';
 
 // ---------- 2. 进入游戏 ----------
 await page.mouse.click(640, 230);
