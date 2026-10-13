@@ -12,6 +12,10 @@ import { WORLD_W, WORLD_H, ARMOR_MAX } from '../config/balance.ts';
 import type { PlayerStats } from '../config/upgrades.ts';
 import { applyBowlPickup, absorbDamage, type ArmorState } from './armor.ts';
 import { healClamp } from './collectibles.ts';
+import {
+  faceScreenOffset, pickExpression, blinkState, gunPose, gunRecoilOffset,
+  GUN_ANCHOR, type ExpressionState
+} from './playerFx.ts';
 
 // 角色在屏幕上显示的高度（px）。素材原图 320 高，等比缩放。
 const DISPLAY_H = 112;
@@ -42,6 +46,18 @@ export class Player {
   private baseScale: number;
   private bowlScale: number;
 
+  // v0.9.0 分层表现：表情叠加层 + 蓝色鲸鱼枪（程序化贴图，锚定真实面部/手部）
+  private fx!: Phaser.GameObjects.Image;
+  private gun!: Phaser.GameObjects.Image;
+  private fxState: ExpressionState = 'idle';
+  private readonly fxOff = faceScreenOffset(DISPLAY_H);
+  private aimTarget: { x: number; y: number } | null = null;
+  private firingTimer = 0;
+  private alertFlag = false;
+  private winFlag = false;
+  private loseFlag = false;
+  private gunRecoil = 0;      // 开火后坐（px，指数衰减）
+
   constructor(scene: Phaser.Scene, stats: PlayerStats) {
     this.scene = scene;
     this.stats = stats;
@@ -57,6 +73,26 @@ export class Player {
     this.bowlSpr.setScale(this.bowlScale * this.baseScale);
     this.bowlSpr.setDepth(21);
     this.bowlSpr.setVisible(false);
+
+    // 表情叠加层：锚定脸部中心（素材像素分析锚点），深度高于身体、低于饭盆
+    this.fx = scene.add.image(this.x + this.fxOff.cx, this.y + this.fxOff.cy, 'fx_idle');
+    this.fx.setDepth(21).setOrigin(0.5);
+
+    // 蓝色鲸鱼枪：铰接在右手侧，随最近敌人瞄准/翻转/后坐
+    const gunOriginX = 48 / 110;   // 枪把在贴图(110x60 2x)中的比例
+    const gunOriginY = 44 / 60;
+    this.gun = scene.add.image(this.x, this.y, 'player_gun')
+      .setOrigin(gunOriginX, gunOriginY)
+      .setDepth(20.6);
+  }
+
+  // 枪把（角色握持处）相对 sprite 中心的显示偏移（px）
+  private handOffset(): { hx: number; hy: number } {
+    const s = DISPLAY_H / GUN_ANCHOR.imgH;
+    return {
+      hx: (GUN_ANCHOR.handle.x - GUN_ANCHOR.imgW / 2) * s,
+      hy: (GUN_ANCHOR.handle.y - GUN_ANCHOR.imgH / 2) * s
+    };
   }
 
   update(dt: number, dirX: number, dirY: number): void {
@@ -124,12 +160,71 @@ export class Player {
       this.bowlSpr.setFlipX(this.facing < 0);
       this.bowlSpr.setAlpha(this.sprite.alpha);   // 无敌帧闪烁同步
     }
+
+    // —— v0.9.0 表情叠加层：跟随角色位移/缩放/翻面/无敌帧闪烁 ——
+    this.firingTimer -= dt;
+    this.gunRecoil *= Math.pow(0.0005, dt);
+    const expr = pickExpression({
+      moving,
+      firing: this.firingTimer > 0,
+      hurt: this.flash > 0 || this.invuln > 0,
+      alert: this.alertFlag,
+      win: this.winFlag,
+      lose: this.loseFlag
+    });
+    // 仅 idle 态叠加帧率无关眨眼
+    let key = `fx_${expr}`;
+    if (expr === 'idle' && blinkState(this.animT)) key = 'fx_blink';
+    if (this.fxState !== expr) {
+      this.fxState = expr;
+      this.fx.setTexture(key);
+    }
+    const kx = this.sprite.scaleX / this.baseScale;
+    const ky = this.sprite.scaleY / this.baseScale;
+    this.fx.setPosition(this.sprite.x + this.fxOff.cx * kx, this.sprite.y + this.fxOff.cy * ky);
+    this.fx.setScale(0.5 * kx, 0.5 * ky);
+    this.fx.setFlipX(this.facing < 0);
+    this.fx.setAlpha(this.sprite.alpha);
+
+    // —— 持枪：瞄准最近敌人 / 翻转 / 后坐 ——
+    const ho = this.handOffset();
+    const hx = this.sprite.x + ho.hx * (this.facing < 0 ? -1 : 1);
+    const hy = this.sprite.y + ho.hy;
+    let aimAngle = 0;
+    if (this.aimTarget) {
+      const dx = this.aimTarget.x - hx;
+      const dy = this.aimTarget.y - hy;
+      aimAngle = Math.atan2(dy, dx);
+    }
+    const pose = gunPose(this.facing < 0 ? -1 : 1, aimAngle);
+    const recoil = gunRecoilOffset(aimAngle, this.gunRecoil, this.facing < 0 ? -1 : 1);
+    this.gun.setPosition(hx + recoil.rx, hy + recoil.ry);
+    this.gun.setRotation(pose.rotation);
+    this.gun.setFlipX(pose.flipX);
+    this.gun.setScale(0.5 * kx, 0.5 * ky);
+    this.gun.setAlpha(this.sprite.alpha);
   }
 
   // 开火后坐：武器每开火一次调用（由 WeaponSystem 接入）
+  // 触发身体后坐 + 枪口后坐 + 射击表情短暂保留
   onFire(): void {
     this.recoilX = this.facing * -4;
+    this.gunRecoil = 5;
+    this.firingTimer = 0.09;
   }
+
+  /** 瞄准目标（最近敌人）；由 GameScene 每帧设置，未设则枪朝正右 */
+  setAimTarget(x: number | null, y: number | null): void {
+    if (x === null || y === null) { this.aimTarget = null; return; }
+    this.aimTarget = { x, y };
+  }
+
+  /** Boss 预警/阶段切换：警觉表情 */
+  setAlert(v: boolean): void { this.alertFlag = v; }
+
+  /** 胜利/失败表情（结算前最后一帧可见） */
+  setWin(v: boolean): void { this.winFlag = v; this.loseFlag = false; }
+  setLose(v: boolean): void { this.loseFlag = v; this.winFlag = false; }
 
   // 返回是否真的受到伤害（无敌帧内免疫）。
   // 受伤优先扣护甲（absorbDamage 纯逻辑），护甲破碎 → 饭盆消失恢复原立绘。
@@ -208,5 +303,7 @@ export class Player {
   destroy(): void {
     this.sprite.destroy();
     this.bowlSpr.destroy();
+    this.fx.destroy();
+    this.gun.destroy();
   }
 }

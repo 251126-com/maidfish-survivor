@@ -161,7 +161,7 @@ const runOk = s2.activeScene === 'Game' && s2.elapsed > sRestart.elapsed && s2.e
 await browser.close();
 
 const checks = [
-  ['页面加载版本标记 __VERSION=0.8.0', ver === '0.8.0'],
+  ['页面加载版本标记 __VERSION=0.9.0', ver === '0.9.0'],
   ['FIT 缩放：画布长宽比≈16:9 且完整在视口内', fitOk],
   ['触摸点开始游戏并进入战斗（刷怪/开火）', startOk],
   ['触摸拖动时摇杆可见且方向正确（左上）', joyOk],

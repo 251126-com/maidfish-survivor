@@ -22,6 +22,7 @@ export class BootScene extends Phaser.Scene {
     this.makeProjectiles();
     this.makeDrops();
     this.makeLoot();
+    this.makePlayerFx();
     this.scene.start('Menu');
   }
 
@@ -107,6 +108,17 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0xe8f8ff, 1);
     g.fillCircle(8, 8, 3.5);
     g.generateTexture('bullet_cannon', 22, 22);
+    g.destroy();
+
+    // Boss 弹幕弹：橙色预警圆（v0.9.0）
+    g = this.add.graphics();
+    g.fillStyle(0xff5a4d, 1);
+    g.fillCircle(7, 7, 6.5);
+    g.fillStyle(0xffc9a0, 0.9);
+    g.fillCircle(7, 7, 3.8);
+    g.fillStyle(0xfff2e6, 1);
+    g.fillCircle(5.5, 5.5, 1.8);
+    g.generateTexture('ebullet', 14, 14);
     g.destroy();
 
     // 尾鳍环绕体（鲸尾造型，呼应主角）
@@ -197,5 +209,175 @@ export class BootScene extends Phaser.Scene {
 
     g.generateTexture('rice_bowl', 72, 64);
     g.destroy();
+  }
+
+  // ---- v0.9.0 角色分层表现：程序化表情叠加 + 蓝色鲸鱼枪 ----
+  // 说明：不是手绘帧/换造型。表情=皮肤色椭圆盖住原图眼睛→在上面重画表情眼/嘴；
+  // 对齐到 player_whale.png 像素分析出的真实锚点（双眼/嘴）。枪=程序化绘制的鲸鱼造型。
+  private makePlayerFx(): void {
+    this.makeExpressionTextures();
+    this.makeWhaleGunTexture();
+  }
+
+  // 表情锚点（原图像素）→ 2x 贴图坐标。素材 308x320，显示高 112 → 基准缩放 0.35。
+  private fxXY(x: number, y: number): [number, number] {
+    const s = (112 / 320) * 2;   // 2x 贴图空间
+    const ox = 28 + (166 - 154) * s;   // 脸中心贴图坐标（56 宽画布）
+    const oy = 22 + (40 - 160) * s;    // 44 高画布
+    return [ox + (x - 166) * s, oy + (y - 40) * s];
+  }
+
+  private canvasTexture(key: string, w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void): void {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    if (!ctx) return;
+    draw(ctx);
+    this.textures.addCanvas(key, c);
+  }
+
+  private makeExpressionTextures(): void {
+    const W = 56, H = 44;
+    const [elx, ely] = this.fxXY(150, 36);   // 左眼
+    const [erx, ery] = this.fxXY(182, 36);   // 右眼
+    const [mx, my] = this.fxXY(176, 48);     // 嘴
+    const SKIN = '#cac6ca';
+    const DARK = '#23262e';
+
+    const cover = (ctx: CanvasRenderingContext2D) => {
+      ctx.fillStyle = SKIN;
+      ctx.beginPath(); ctx.ellipse(elx, ely, 4.6, 4.2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(erx, ery, 4.6, 4.2, 0, 0, Math.PI * 2); ctx.fill();
+    };
+    const eye = (ctx: CanvasRenderingContext2D, x: number, y: number, r = 2.6, ring = false) => {
+      if (ring) { ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(x, y, r + 1.2, 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = DARK;
+      ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.9, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.35, r * 0.38, 0, Math.PI * 2); ctx.fill();
+    };
+    const closedEye = (ctx: CanvasRenderingContext2D, x: number, y: number, up = false) => {
+      ctx.strokeStyle = DARK; ctx.lineWidth = 1.7; ctx.lineCap = 'round';
+      ctx.beginPath();
+      const dy = up ? -1.1 : 1.1;
+      ctx.moveTo(x - 3.4, y - dy); ctx.quadraticCurveTo(x, y + dy, x + 3.4, y - dy);
+      ctx.stroke();
+    };
+    const mouthLine = (ctx: CanvasRenderingContext2D, w = 6, dy = 0, smile = 0) => {
+      ctx.strokeStyle = '#6b4a4a'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(mx - w / 2, my + dy);
+      if (smile === 0) ctx.lineTo(mx + w / 2, my + dy);
+      else ctx.quadraticCurveTo(mx, my + dy + smile, mx + w / 2, my + dy);
+      ctx.stroke();
+    };
+
+    // idle：睁眼微笑
+    this.canvasTexture('fx_idle', W, H, (ctx) => {
+      cover(ctx);
+      eye(ctx, elx, ely); eye(ctx, erx, ery);
+      mouthLine(ctx, 6, 0, 2.2);
+    });
+    // blink：闭眼
+    this.canvasTexture('fx_blink', W, H, (ctx) => {
+      cover(ctx);
+      closedEye(ctx, elx, ely); closedEye(ctx, erx, ery);
+      mouthLine(ctx, 6, 0, 1.6);
+    });
+    // move：专注半眯眼 + 抿嘴
+    this.canvasTexture('fx_move', W, H, (ctx) => {
+      cover(ctx);
+      closedEye(ctx, elx, ely); closedEye(ctx, erx, ery);
+      ctx.strokeStyle = DARK; ctx.lineWidth = 1.4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(elx - 3, ely - 3.6); ctx.lineTo(elx + 3, ely - 2.2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(erx - 3, ely - 3.6); ctx.lineTo(erx + 3, ely - 2.2); ctx.stroke();
+      mouthLine(ctx, 7, 0.6, -0.6);
+    });
+    // fire：单眼眯 + 张嘴（射击专注）
+    this.canvasTexture('fx_fire', W, H, (ctx) => {
+      cover(ctx);
+      eye(ctx, elx, ely); closedEye(ctx, erx, ery);
+      ctx.fillStyle = '#6b4a4a';
+      ctx.beginPath(); ctx.ellipse(mx, my + 1, 2.4, 2.0, 0, 0, Math.PI * 2); ctx.fill();
+    });
+    // hurt：痛苦闭眼 + 波浪嘴
+    this.canvasTexture('fx_hurt', W, H, (ctx) => {
+      cover(ctx);
+      ctx.strokeStyle = DARK; ctx.lineWidth = 1.7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(elx - 3.4, ely + 2.4); ctx.lineTo(elx + 3.4, ely - 1.4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(erx - 3.4, ely + 2.4); ctx.lineTo(erx + 3.4, ely - 1.4); ctx.stroke();
+      ctx.strokeStyle = '#8a4a4a'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(mx - 3.4, my + 1);
+      ctx.quadraticCurveTo(mx - 1.7, my + 2.8, mx, my + 1);
+      ctx.quadraticCurveTo(mx + 1.7, my - 0.8, mx + 3.4, my + 1);
+      ctx.stroke();
+    });
+    // alert：瞪大眼 + 张嘴（Boss 预警）
+    this.canvasTexture('fx_alert', W, H, (ctx) => {
+      cover(ctx);
+      eye(ctx, elx, ely, 3.6, true); eye(ctx, erx, ery, 3.6, true);
+      ctx.fillStyle = '#8a4a4a';
+      ctx.beginPath(); ctx.ellipse(mx, my + 1, 3.0, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+    });
+    // win：^^ 眼 + 大微笑
+    this.canvasTexture('fx_win', W, H, (ctx) => {
+      cover(ctx);
+      closedEye(ctx, elx, ely, true); closedEye(ctx, erx, ery, true);
+      ctx.strokeStyle = '#6b4a4a'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(mx - 4, my - 0.4); ctx.quadraticCurveTo(mx, my + 3.6, mx + 4, my - 0.4); ctx.stroke();
+    });
+    // lose：沮丧闭眼 + 撇嘴
+    this.canvasTexture('fx_lose', W, H, (ctx) => {
+      cover(ctx);
+      closedEye(ctx, elx, ely, true); closedEye(ctx, erx, ery, true);
+      ctx.strokeStyle = '#8a4a4a'; ctx.lineWidth = 1.7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(mx - 3.4, my + 2.4); ctx.quadraticCurveTo(mx, my - 1.2, mx + 3.4, my + 2.4); ctx.stroke();
+    });
+  }
+
+  // 蓝色鲸鱼枪（程序化绘制，非角色造型）：枪身=鲸鱼身体，尾鳍=枪托，嘴=枪口。
+  // 贴图朝 +X，origin 设在枪把（握持处）。2x 绘制 0.5 显示，保证细部清晰。
+  private makeWhaleGunTexture(): void {
+    const W = 110, H = 60;
+    this.canvasTexture('player_gun', W, H, (ctx) => {
+      const cx = 60, cy = 30;   // 身体中心
+      // 尾鳍（枪托）
+      ctx.fillStyle = '#2f6fc0';
+      ctx.beginPath();
+      ctx.moveTo(14, cy - 16); ctx.lineTo(4, cy - 30); ctx.lineTo(16, cy - 4); ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(14, cy + 16); ctx.lineTo(4, cy + 30); ctx.lineTo(16, cy + 4); ctx.closePath(); ctx.fill();
+      // 背鳍
+      ctx.beginPath();
+      ctx.moveTo(cx - 20, cy - 18); ctx.lineTo(cx - 8, cy - 34); ctx.lineTo(cx + 2, cy - 16); ctx.closePath(); ctx.fill();
+      // 身体
+      ctx.fillStyle = '#3f8fe8';
+      ctx.beginPath(); ctx.ellipse(cx, cy, 44, 20, 0, 0, Math.PI * 2); ctx.fill();
+      // 肚皮（白）
+      ctx.fillStyle = '#e8f4ff';
+      ctx.beginPath(); ctx.ellipse(cx + 2, cy + 7, 34, 11, 0, 0, Math.PI * 2); ctx.fill();
+      // 枪口（鲸鱼嘴）
+      ctx.fillStyle = '#123';
+      ctx.beginPath(); ctx.arc(101, cy, 8.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffd447';
+      ctx.beginPath(); ctx.arc(100, cy, 4.6, 0, Math.PI * 2); ctx.fill();
+      // 眼
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(76, cy - 8, 5.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#123';
+      ctx.beginPath(); ctx.arc(78, cy - 8, 2.8, 0, Math.PI * 2); ctx.fill();
+      // 侧鳍
+      ctx.beginPath();
+      ctx.moveTo(cx + 10, cy + 14); ctx.lineTo(cx + 22, cy + 26); ctx.lineTo(cx + 18, cy + 12); ctx.closePath(); ctx.fill();
+      // 枪把（握持处）：身体下方深色握柄
+      ctx.fillStyle = '#1c3f66';
+      ctx.fillRect(38, cy + 12, 20, 14);
+      ctx.fillStyle = '#0e2740';
+      ctx.fillRect(38, cy + 12, 20, 5);
+      // 高光
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(cx, cy - 6, 32, Math.PI * 1.15, Math.PI * 1.7); ctx.stroke();
+    });
   }
 }

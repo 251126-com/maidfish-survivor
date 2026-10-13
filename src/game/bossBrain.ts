@@ -195,7 +195,7 @@ export class BossBrain {
       this.y += this.dashDirY * this.dashSpeed * dt;
     }
     if (this.stateT >= this.actDuration) {
-      this.pendingEvents.push({ type: 'act-end', skill: this.skill, phase: this.phase, params: this.lastTelegraphParams });
+      this.pendingEvents.push({ type: 'act-end', skill: this.skill, phase: this.phase, params: this.lastTelegraphParams ?? undefined });
       this.state = 'recover';
       this.stateT = 0;
     }
@@ -207,6 +207,10 @@ export class BossBrain {
   get telegraphProg(): number {
     if (this.state !== 'telegraph') return 0;
     return clamp(this.stateT / this.telegraphDuration, 0, 1);
+  }
+  /** 预警/执行阶段的技能参数（dash 直线 / spread 聚能角 / circle 用 warningCircles）；非预警态按状态安全返回 null */
+  get telegraphParams(): SkillParams | null {
+    return (this.state === 'telegraph' || this.state === 'act') ? this.lastTelegraphParams : null;
   }
   get warningCircles(): { x: number; y: number; r: number }[] { return this.circleCache; }
   get inTelegraph(): boolean { return this.state === 'telegraph'; }

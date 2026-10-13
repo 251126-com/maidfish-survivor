@@ -31,7 +31,8 @@ export const POOL_LIMIT = {
   enemy: 300,
   bullet: 400,
   gem: 200,
-  damageText: 40
+  damageText: 40,
+  enemyBullet: 120   // v0.9.0 Boss 弹幕（扇弹）池
 };
 
 // 敌人属性随时间成长：每分钟 +35% 生命，+3% 移速（封顶）

@@ -1,4 +1,4 @@
-// v0.8.0 新玩法端到端验收：大白饭回血（掉落+升级卡）、饭盆护甲（30 吸收/破碎/恢复立绘）、
+// v0.9.0 新玩法端到端验收：大白饭回血（掉落+升级卡）、饭盆护甲（30 吸收/破碎/恢复立绘）、
 // HUD 护甲条、受控随机掉落（window.__DROP_RNG）、对象池回收（多次拾取）、无回归错误。
 // 用法：CHROME_PATH=/usr/bin/chromium E2E_URL=http://127.0.0.1:4173/ node e2e/verify-loot.mjs
 import { chromium } from 'playwright';
@@ -25,10 +25,10 @@ page.on('console', m => { if (m.type() === 'error' && !isNoise(m.text())) errors
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForTimeout(1500);
 const ver = await page.evaluate(() => window.__VERSION ?? null);
-check('版本标记 __VERSION=0.8.0', ver === '0.8.0', `实际 ${ver}`);
+check('版本标记 __VERSION=0.9.0', ver === '0.9.0', `实际 ${ver}`);
 const lootMark = await page.evaluate(() => window.__LOOT_MARK ?? null);
 check('__LOOT_MARK 版本/概率/回血/护甲常量',
-  !!lootMark && lootMark.version === '0.8.0' && lootMark.riceChance === 0.015 && lootMark.bowlChance === 0.0035 && lootMark.riceHeal === 20 && lootMark.armorMax === 30,
+  !!lootMark && lootMark.version === '0.9.0' && lootMark.riceChance === 0.015 && lootMark.bowlChance === 0.0035 && lootMark.riceHeal === 20 && lootMark.armorMax === 30,
   `实际 ${JSON.stringify(lootMark)}`);
 check('掉落概率极低且饭盆更稀有', !!lootMark && lootMark.bowlChance < lootMark.riceChance);
 
@@ -207,7 +207,7 @@ const shots = fs.existsSync(OUT) ? fs.readdirSync(OUT).filter(f => f.endsWith('.
 console.log('本轮截图:', shots.slice(-6).join(', '));
 await browser.close();
 
-console.log('\n===== v0.8.0 新玩法验收 ====');
+console.log('\n===== v0.9.0 新玩法验收 ====');
 let allPass = true;
 for (const [name, ok, detail] of results) {
   console.log(`${ok ? '✔' : '✘'} ${name}`);

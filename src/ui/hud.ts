@@ -28,6 +28,8 @@ export interface HudData {
   bossHp: number;      // 0 表示不显示 Boss 血条
   bossMaxHp: number;
   bossName: string;
+  bossPhase: number;    // 0..2，Boss 三阶段（专属血条下方标注 阶段 x/3）
+  bossWarning: string;  // 空=常态；预警！/躲避！/狂暴！
 }
 
 export class Hud {
@@ -42,6 +44,7 @@ export class Hud {
   private xpText: Phaser.GameObjects.Text;
   private weaponText: Phaser.GameObjects.Text;
   private bossText: Phaser.GameObjects.Text;
+  private bossPhaseText: Phaser.GameObjects.Text;
   private soundBtn: Phaser.GameObjects.Rectangle;
   private soundText: Phaser.GameObjects.Text;
   private vibBtn: Phaser.GameObjects.Rectangle;
@@ -65,6 +68,8 @@ export class Hud {
   private lastXp = -1;
   private lastBossHp = -1;
   private lastBossMaxHp = -1;
+  private lastBossPhaseStr = '';
+  private lastBossWarning = '';
   private lastTimeStr = '';
   private lastInfoStr = '';
   private lastHpStr = '';
@@ -106,8 +111,13 @@ export class Hud {
       fontFamily: 'monospace', fontSize: '13px', color: '#bfe3ff', lineSpacing: 3
     }).setDepth(101).setScrollFactor(0);
 
-    this.bossText = scene.add.text(GAME_W / 2, 74, '', {
+    this.bossText = scene.add.text(GAME_W / 2, 72, '', {
       fontFamily: 'monospace', fontSize: '14px', color: '#ffe9a8'
+    }).setOrigin(0.5, 0).setDepth(101).setScrollFactor(0);
+
+    // Boss 阶段/预警态文字：专属血条下方（血条 92..108，状态文字 116..）
+    this.bossPhaseText = scene.add.text(GAME_W / 2, 118, '', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#ffd447', align: 'center'
     }).setOrigin(0.5, 0).setDepth(101).setScrollFactor(0);
 
     // 右列按钮：场景 / 暂停 / 音效 / 震动
@@ -286,6 +296,24 @@ export class Hud {
       }
       this.bossText.setText(d.bossHp > 0 ? d.bossName : '');
     }
+
+    // Boss 阶段 + 预警态（预警/躲避/狂暴 持续显示，配合顶部横幅）
+    if (d.bossHp > 0) {
+      const phaseStr = `阶段 ${Math.min(3, Math.max(1, d.bossPhase + 1))}/3`;
+      if (phaseStr !== this.lastBossPhaseStr) {
+        this.lastBossPhaseStr = phaseStr;
+        this.bossPhaseText.setText(`${phaseStr}${d.bossWarning ? '  ·  ' + d.bossWarning : ''}`);
+      } else if (d.bossWarning !== this.lastBossWarning) {
+        this.bossPhaseText.setText(`${phaseStr}${d.bossWarning ? '  ·  ' + d.bossWarning : ''}`);
+      }
+      this.lastBossWarning = d.bossWarning;
+      this.bossPhaseText.setColor(d.bossWarning === '狂暴！' ? '#ff6b5a' : d.bossWarning === '躲避！' ? '#ffb04d' : '#ffd447');
+      this.bossPhaseText.setVisible(true);
+    } else {
+      this.bossPhaseText.setVisible(false);
+      this.lastBossPhaseStr = '';
+      this.lastBossWarning = '';
+    }
   }
 
   destroy(): void {
@@ -300,6 +328,7 @@ export class Hud {
     this.xpText.destroy();
     this.weaponText.destroy();
     this.bossText.destroy();
+    this.bossPhaseText.destroy();
     this.soundBtn.destroy();
     this.soundText.destroy();
     this.vibBtn.destroy();

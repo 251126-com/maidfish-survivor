@@ -14,6 +14,8 @@ import { vibrate } from '../core/vibration.ts';
 import { Player } from '../game/player.ts';
 import { EnemySystem, type Enemy } from '../game/enemySystem.ts';
 import { WeaponSystem } from '../game/weaponSystem.ts';
+import { EnemyBulletSystem } from '../game/enemyBullets.ts';
+import { BossBrain, type BossEvent, type SkillParams } from '../game/bossBrain.ts';
 import { DropSystem, type LootKind } from '../game/dropSystem.ts';
 import { rollSpecialDrop } from '../game/collectibles.ts';
 import { InputSystem } from '../game/inputSystem.ts';
@@ -59,6 +61,12 @@ export class GameScene extends Phaser.Scene {
   private spawnTimer = 0;
   private bossSpawned = false;
   private isOver = false;
+  // v0.9.0 Boss 战
+  private bossBrain: BossBrain | null = null;
+  private bossEnemy: Enemy | null = null;
+  private enemyBullets: EnemyBulletSystem | null = null;
+  private bossTeleG: Phaser.GameObjects.Graphics | null = null;
+  private bossBannerText: Phaser.GameObjects.Text | null = null;
   private paused = false;
   private pauseOverlay: Phaser.GameObjects.Rectangle | null = null;
   private pauseLabel: Phaser.GameObjects.Text | null = null;
@@ -124,6 +132,10 @@ export class GameScene extends Phaser.Scene {
 
     this.enemies = new EnemySystem(this);
     this.enemies.onKill = (e) => this.onEnemyKilled(e);
+
+    // v0.9.0 Boss 弹幕池 + 预警绘制层（深度高于敌人、低于弹幕/角色特效）
+    this.enemyBullets = new EnemyBulletSystem(this);
+    this.bossTeleG = this.add.graphics().setDepth(15);
 
     this.weapons = new WeaponSystem(this);
     this.weapons.addWeapon('rifle');   // 默认武器
@@ -198,6 +210,9 @@ export class GameScene extends Phaser.Scene {
 
     // 场景退出时解绑输入监听，避免重复绑定
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      if (this.enemyBullets) this.enemyBullets.pool.releaseAll();
+      this.bossTeleG?.destroy();
+      this.bossBannerText?.destroy();
       this.bgLayer.destroy();
       this.inputSys.destroy();
       this.hud.destroy();
@@ -234,6 +249,18 @@ export class GameScene extends Phaser.Scene {
     this.player.update(dt, this.inputSys.dirX, this.inputSys.dirY);
     this.enemies.update(dt, this.player.x, this.player.y);
     this.weapons.update(dt, this.player, this.enemies);
+
+    // 最近敌人瞄准（持枪转向用，无敌人时枪朝默认方向）
+    const aim = this.nearestEnemy();
+    if (aim) this.player.setAimTarget(aim.x, aim.y);
+    else this.player.setAimTarget(null, null);
+
+    // Boss 战：预警/出招/弹幕
+    this.updateBoss(dt);
+    if (this.enemyBullets) {
+      this.enemyBullets.update(dt);
+      this.collideEnemyBullets();
+    }
 
     this.collideEnemyPlayer();
     this.drops.update(dt, this.player);
@@ -293,11 +320,16 @@ export class GameScene extends Phaser.Scene {
     // Boss 到点登场（只一次）
     if (!this.bossSpawned && this.elapsed >= BOSS_TIME) {
       this.bossSpawned = true;
-      this.spawnEnemy('boss');
+      const be = this.spawnEnemy('boss');
+      if (be) {
+        this.bossEnemy = be;
+        this.bossBrain = new BossBrain(be.x, be.y, be.hp / be.maxHp);
+      }
       sfx.boss();
       vibrate([90, 60, 90]);
       const s = shakeForEvent('boss');
       this.cameras.main.shake(s.duration, s.intensity);
+      this.showBossBanner('蓝色大肥鱼王 登场！', '#ffd447');
     }
 
     const phase = currentPhase(this.elapsed);
@@ -311,15 +343,15 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // 屏幕外环形生成
-  private spawnEnemy(id: string): void {
+  // 屏幕外环形生成；返回生成的敌人（Boss 需要引用）
+  private spawnEnemy(id: string): Enemy | null {
     const a = Math.random() * Math.PI * 2;
     const r = 760 + Math.random() * 220;
     let x = this.player.x + Math.cos(a) * r;
     let y = this.player.y + Math.sin(a) * r;
     x = Phaser.Math.Clamp(x, 30, WORLD_W - 30);
     y = Phaser.Math.Clamp(y, 30, WORLD_H - 30);
-    this.enemies.spawn(id, x, y, this.elapsed);
+    return this.enemies.spawn(id, x, y, this.elapsed);
   }
 
   private collideEnemyPlayer(): void {
@@ -343,6 +375,213 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // —— v0.9.0 Boss 战表现/逻辑 ——
+
+  // 最近敌人（供持枪瞄准；含 Boss），无则 null
+  private nearestEnemy(): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    let bd = Infinity;
+    const live = this.enemies.live;
+    for (let i = 0; i < live.length; i++) {
+      const e = live[i];
+      if (!e.active) continue;
+      const d = (e.x - this.player.x) ** 2 + (e.y - this.player.y) ** 2;
+      if (d < bd) { bd = d; best = { x: e.x, y: e.y }; }
+    }
+    return best;
+  }
+
+  // Boss 脑推进：预警表现/出招/阶段变化/专属血条状态
+  private updateBoss(dt: number): void {
+    const brain = this.bossBrain;
+    const be = this.bossEnemy;
+    if (!brain || !be || !be.active) { this.bossTeleG?.clear(); return; }
+
+    // 非冲刺时 Boss 位置跟随敌人系统（追踪玩家+分离力）；冲刺时由脑驱动
+    if (!brain.dashing) {
+      brain.x = be.x;
+      brain.y = be.y;
+    }
+    const hpRatio = Phaser.Math.Clamp(be.hp / be.maxHp, 0, 1);
+    const events = brain.step(dt, hpRatio, this.player.x, this.player.y);
+    // 冲刺时把脑内位移写回敌人
+    if (brain.dashing) {
+      be.x = Phaser.Math.Clamp(brain.x, 0, WORLD_W);
+      be.y = Phaser.Math.Clamp(brain.y, 0, WORLD_H);
+      brain.x = be.x; brain.y = be.y;
+      be.sprite.setPosition(be.x, be.y);
+    }
+    for (const ev of events) this.handleBossEvent(ev, brain, be);
+
+    // 预警表现（每个 telegraph/act 帧绘制，暂停/升级时自然冻结）
+    this.drawBossTelegraph(brain);
+    // 预警中 → 角色警觉表情
+    this.player.setAlert(brain.inTelegraph || brain.state === 'roar' || brain.inAct);
+  }
+
+  private handleBossEvent(ev: BossEvent, brain: BossBrain, be: Enemy): void {
+    switch (ev.type) {
+      case 'phase-change':
+        this.showBossBanner(`Boss 狂暴 · 阶段 ${ev.phase + 1}/3`, '#ff6b5a');
+        this.cameras.main.shake(240, 0.008);
+        vibrate([60, 40, 60]);
+        break;
+      case 'roar-start':
+        // 咆哮期间霸体脉冲由 drawBossTelegraph 画（红圈呼吸）
+        break;
+      case 'telegraph-start': {
+        const names: Record<string, string> = { dash: '预警：冲刺！', spread: '预警：扇弹！', circle: '预警：红圈！' };
+        if (ev.skill) this.showBossBanner(names[ev.skill] ?? '', '#ffd447');
+        break;
+      }
+      case 'act-start': {
+        const p = ev.params;
+        if (!p) break;
+        if (ev.skill === 'spread' && p.fanAngle !== undefined) {
+          // 扇形弹幕：phase 决定弹数（brain 已算好）
+          const count = p.fanCount ?? 7;
+          const half = p.fanHalf ?? 0.42;
+          const speed = 250 + brain.phase * 40;
+          for (let i = 0; i < count; i++) {
+            const off = -half + (2 * half * i) / Math.max(1, count - 1);
+            this.enemyBullets?.spawn(be.x, be.y, p.fanAngle + off, speed, 12 + brain.phase * 4, 7, 3.4);
+          }
+          sfx.boss();  // 弹幕发出提示音
+        }
+        break;
+      }
+      case 'act-end': {
+        const p = ev.params;
+        if (ev.skill === 'circle' && p?.circles) {
+          for (const c of p.circles) this.explodeCircle(c.x, c.y, c.r, brain.phase);
+        }
+        this.bossTeleG?.clear();
+        break;
+      }
+    }
+  }
+
+  // 红圈炸裂：范围内玩家受伤 + 爆发粒子
+  private explodeCircle(x: number, y: number, r: number, phase: number): void {
+    const dmg = 20 + phase * 10;
+    const dx = this.player.x - x;
+    const dy = this.player.y - y;
+    if (Math.hypot(dx, dy) < r + this.player.radius) {
+      if (this.player.takeDamage(dmg, x, y)) {
+        sfx.hurt();
+        vibrate([70, 40, 70]);
+        this.flashHurt();
+      }
+    }
+    for (let i = 0; i < 16; i++) {
+      const p = this.add.circle(x, y, 3 + Math.random() * 3, 0xff7a4d, 1);
+      p.setDepth(25);
+      const a = Math.random() * Math.PI * 2;
+      const sp = 100 + Math.random() * 160;
+      this.tweens.add({
+        targets: p, x: x + Math.cos(a) * sp, y: y + Math.sin(a) * sp,
+        alpha: 0, scale: 0.2, duration: 380 + Math.random() * 180, ease: 'Cubic.easeOut',
+        onComplete: () => p.destroy()
+      });
+    }
+  }
+
+  // 绘制预警：dash 直线 / spread 聚能 / circle 红圈
+  private drawBossTelegraph(brain: BossBrain): void {
+    const g = this.bossTeleG;
+    if (!g) return;
+    g.clear();
+    // Boss 独立相态光晕（程序化）：三阶段变色 蓝→橙→红，咆哮时脉冲放大
+    const auraColor = brain.phase >= 2 ? 0xff6b5a : brain.phase === 1 ? 0xffb04d : 0x4a9fe8;
+    const auraR = 92 + (brain.state === 'roar' ? Math.sin(this.elapsed * 14) * 14 : 0);
+    g.fillStyle(auraColor, 0.10);
+    g.fillCircle(brain.x, brain.y, auraR);
+    g.lineStyle(3, auraColor, 0.35);
+    g.strokeCircle(brain.x, brain.y, auraR + 10);
+    const p = brain.telegraphParams;
+    const skill = brain.currentSkill;
+    if (brain.state === 'telegraph') {
+      if (skill === 'dash' && p && p.dashDirX !== undefined && p.dashDirY !== undefined
+          && p.dashFromX !== undefined && p.dashFromY !== undefined) {
+        const len = 1000;
+        g.lineStyle(6, 0xff4a3a, 0.65);
+        g.beginPath();
+        g.moveTo(p.dashFromX, p.dashFromY);
+        g.lineTo(p.dashFromX + p.dashDirX * len, p.dashFromY + p.dashDirY * len);
+        g.strokePath();
+        g.lineStyle(3, 0xffd9d0, 0.85);
+        g.beginPath();
+        g.moveTo(p.dashFromX, p.dashFromY);
+        g.lineTo(p.dashFromX + p.dashDirX * len, p.dashFromY + p.dashDirY * len);
+        g.strokePath();
+      } else if (skill === 'spread') {
+        // 聚能环：从大收缩到小
+        const rr = 90 - brain.telegraphProg * 50;
+        g.lineStyle(5, 0xffd447, 0.7);
+        g.strokeCircle(brain.x, brain.y, Math.max(12, rr));
+        g.fillStyle(0xffd447, 0.12);
+        g.fillCircle(brain.x, brain.y, Math.max(12, rr));
+      } else if (skill === 'circle') {
+        const prog = brain.telegraphProg;
+        for (const c of brain.warningCircles) {
+          const r = c.r * (0.35 + 0.65 * prog);
+          g.lineStyle(5, 0xff4a3a, 0.8);
+          g.strokeCircle(c.x, c.y, r);
+          g.fillStyle(0xff4a3a, 0.16 * prog);
+          g.fillCircle(c.x, c.y, r);
+        }
+      }
+    } else if (brain.state === 'act' && skill === 'circle') {
+      // act 阶段圈保持满半径，等 act-end 炸裂
+      for (const c of brain.warningCircles) {
+        g.lineStyle(5, 0xff4a3a, 0.9);
+        g.strokeCircle(c.x, c.y, c.r);
+        g.fillStyle(0xff4a3a, 0.2);
+        g.fillCircle(c.x, c.y, c.r);
+      }
+    } else if (brain.state === 'roar') {
+      // 咆哮呼吸圈（霸体提示）
+      const pulse = 70 + Math.sin(this.elapsed * 14) * 12;
+      g.lineStyle(5, 0xff7a4d, 0.5);
+      g.strokeCircle(brain.x, brain.y, pulse);
+    }
+  }
+
+  // Boss 弹幕与玩家碰撞
+  private collideEnemyBullets(): void {
+    const bs = this.enemyBullets?.live;
+    if (!bs) return;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      const rr = b.radius + this.player.radius;
+      const dx = b.x - this.player.x;
+      const dy = b.y - this.player.y;
+      if (dx * dx + dy * dy <= rr * rr) {
+        if (this.player.takeDamage(b.damage, b.x, b.y)) {
+          sfx.hurt();
+          vibrate([60, 40, 60]);
+          this.flashHurt();
+        }
+        this.enemyBullets!.pool.release(b);
+      }
+    }
+  }
+
+  // 屏幕上方红色横幅（Boss 阶段/预警/击破）
+  private showBossBanner(text: string, color: string): void {
+    if (this.bossBannerText) this.bossBannerText.destroy();
+    this.bossBannerText = this.add.text(GAME_W / 2, 148, text, {
+      fontFamily: 'monospace', fontSize: '30px', color,
+      stroke: '#062033', strokeThickness: 6
+    }).setOrigin(0.5).setDepth(175).setScrollFactor(0).setAlpha(0);
+    this.tweens.add({
+      targets: this.bossBannerText,
+      alpha: 1, y: 138, duration: 200, ease: 'Cubic.easeOut',
+      yoyo: true, hold: 950,
+      onComplete: () => { this.bossBannerText?.destroy(); this.bossBannerText = null; }
+    });
+  }
+
   private onEnemyKilled(e: Enemy): void {
     this.kills++;
     sfx.kill();
@@ -353,7 +592,40 @@ export class GameScene extends Phaser.Scene {
     const special = rollSpecialDrop(this.dropRng());
     if (special === 'rice') this.drops.spawn(e.x, e.y, 'rice', RICE_HEAL);
     else if (special === 'bowl') this.drops.spawn(e.x, e.y, 'bowl', ARMOR_MAX);
-    if (e.isBoss) this.finish(true);
+    if (e.isBoss) this.onBossKilled();
+  }
+
+  // Boss 死亡：专属死亡反馈（爆炸粒子/震屏/大额奖励掉落）后判定胜利
+  private onBossKilled(): void {
+    if (!this.bossEnemy) return;
+    const bx = this.bossEnemy.x;
+    const by = this.bossEnemy.y;
+    for (let ring = 0; ring < 3; ring++) {
+      for (let i = 0; i < 18; i++) {
+        const p = this.add.circle(bx, by, 4 + ring * 2, ring === 2 ? 0x4de8c2 : 0xff7a4d, 1);
+        p.setDepth(25);
+        const a = (i / 18) * Math.PI * 2;
+        const sp = 180 + ring * 90 + Math.random() * 110;
+        this.tweens.add({
+          targets: p, x: bx + Math.cos(a) * sp, y: by + Math.sin(a) * sp,
+          alpha: 0, scale: 0.1, duration: 520 + ring * 140, ease: 'Cubic.easeOut',
+          onComplete: () => p.destroy()
+        });
+      }
+    }
+    for (let i = 0; i < 14; i++) this.drops.spawn(bx + (Math.random() - 0.5) * 80, by + (Math.random() - 0.5) * 80, 'xp', 25);
+    for (let i = 0; i < 8; i++) this.drops.spawn(bx + (Math.random() - 0.5) * 80, by + (Math.random() - 0.5) * 80, 'gold', 1);
+    this.drops.spawn(bx, by, 'rice', RICE_HEAL);
+    this.drops.spawn(bx, by, 'bowl', ARMOR_MAX);
+    this.cameras.main.shake(320, 0.014);
+    vibrate([120, 60, 120, 60]);
+    sfx.evolve();
+    this.showBossBanner('Boss 击破！', '#4de8c2');
+    this.bossTeleG?.clear();
+    this.bossBrain = null;
+    this.bossEnemy = null;
+    this.player.setAlert(false);
+    this.finish(true);
   }
 
   // 掉落随机源：E2E 可注入 window.__DROP_RNG 做受控掉落验证；默认 Math.random
@@ -477,6 +749,15 @@ export class GameScene extends Phaser.Scene {
         break;
       }
     }
+    let bossPhase = 0;
+    let bossWarning = '';
+    if (this.bossBrain && this.bossEnemy) {
+      bossPhase = this.bossBrain.phase;
+      const st = this.bossBrain.state;
+      if (st === 'telegraph') bossWarning = '预警！';
+      else if (st === 'roar') bossWarning = '狂暴！';
+      else if (st === 'act') bossWarning = '躲避！';
+    }
     this.hud.update({
       hp: this.stats.hp,
       maxHp: this.stats.maxHp,
@@ -490,7 +771,7 @@ export class GameScene extends Phaser.Scene {
       gold: this.gold,
       elapsed: this.elapsed,
       weapons: this.weapons.owned.map(w => ({ name: w.def.name, level: w.level, maxed: w.maxed })),
-      bossHp, bossMaxHp, bossName
+      bossHp, bossMaxHp, bossName, bossPhase, bossWarning
     });
   }
 

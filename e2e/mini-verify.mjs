@@ -14,7 +14,7 @@ page.on('pageerror', e=>errors.push('pageerror: '+e.message));
 page.on('console', m=>{ if(m.type()==='error'&&!isNoise(m.text())) errors.push('console: '+m.text()); });
 await page.goto(URL,{waitUntil:'load'});
 await page.waitForTimeout(1600);
-check('D1 版本标记 __VERSION=0.8.0', (await page.evaluate(()=>window.__VERSION))==='0.8.0');
+check('D1 版本标记 __VERSION=0.9.0', (await page.evaluate(()=>window.__VERSION))==='0.9.0');
 await page.mouse.click(640,230);
 await page.waitForTimeout(1800);
 const asset = await page.evaluate(()=>{const s=window.__game.scene.getScene('Game');const i=s.player.sprite;return{key:i.texture.key,w:i.texture.source[0].width,h:i.texture.source[0].height};});

@@ -1,6 +1,8 @@
 // 主菜单：开始游戏（可选起始场景）+ 局外永久强化商店（金币消费）
 // v0.8.0：新增「起始场景」四卡选择 —— 四张授权背景首屏即可见、可点选，
 //         选中项作为开局背景传给 GameScene（正常玩法仍默认随机轮换）。
+// v0.9.0：菜单重设计 —— 顶部标题区 / 独立「开始游戏」面板 / 独立「永久强化」商店面板，
+//         蓝白层级清晰、面板分区不拥挤；开始按钮保持在 (640,230) 兼容既有 e2e。
 import Phaser from 'phaser';
 import { GAME_W, GAME_H } from '../config/balance.ts';
 import { coverFit } from '../config/cover.ts';
@@ -31,51 +33,62 @@ export class MenuScene extends Phaser.Scene {
       .setDepth(1);
     this.applyBg();
 
-    // 标题
-    this.add.text(GAME_W / 2, 70, '鲸鱼娘 · 割草求生', {
-      fontFamily: 'monospace', fontSize: '44px', color: '#7fd4ff'
+    // ============ 顶部标题区（留白透气，蓝白主色） ============
+    this.add.text(GAME_W / 2, 52, '鲸鱼娘 · 割草求生', {
+      fontFamily: 'monospace', fontSize: '42px', color: '#7fd4ff',
+      stroke: '#062033', strokeThickness: 6
     }).setOrigin(0.5);
-    this.add.text(GAME_W / 2, 118, '自动射击 · 走位生存 · 12 分钟撑到底', {
-      fontFamily: 'monospace', fontSize: '16px', color: '#6f93b3'
+    this.add.text(GAME_W / 2, 98, '自动射击 · 走位生存 · 12 分钟撑到底', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#8fb8d8'
     }).setOrigin(0.5);
-
-    // 最佳记录
     const mm = Math.floor(save.best.time / 60);
     const ss = Math.floor(save.best.time % 60);
-    this.add.text(GAME_W / 2, 150, `最佳：${mm}分${ss}秒 · 击杀 ${save.best.kills} · 最高 Lv.${save.best.level}`, {
-      fontFamily: 'monospace', fontSize: '14px', color: '#9fd8ff'
-    }).setOrigin(0.5);
+    this.add.text(GAME_W / 2, 128, `最佳：${mm}分${ss}秒 · 击杀 ${save.best.kills} · 最高 Lv.${save.best.level}`, {
+      fontFamily: 'monospace', fontSize: '14px', color: '#cfeaff'
+    }).setOrigin(0.5).setDepth(2);
 
-    // 开始按钮
-    const btn = this.add.rectangle(GAME_W / 2, 230, 300, 76, 0x2f7fd0, 1)
+    // ============ 独立面板①：开始游戏（主按钮 + 起始场景选择） ============
+    this.add.rectangle(GAME_W / 2, 236, 620, 196, 0x0c1c2e, 0.88)
+      .setStrokeStyle(2, 0x2f6fc0).setDepth(1);
+    this.add.text(GAME_W / 2, 166, '开始游戏', {
+      fontFamily: 'monospace', fontSize: '15px', color: '#9fd8ff'
+    }).setOrigin(0.5).setDepth(2);
+
+    // 主 CTA（位置保持 640,230 兼容既有 e2e 点击）
+    const btn = this.add.rectangle(GAME_W / 2, 216, 320, 62, 0x2f7fd0, 1)
       .setStrokeStyle(3, 0x9fe8ff)
       .setInteractive({ useHandCursor: true })
       .setDepth(2);
-    this.add.text(GAME_W / 2, 230, '开始游戏', {
+    this.add.text(GAME_W / 2, 216, '开始游戏', {
       fontFamily: 'monospace', fontSize: '28px', color: '#ffffff'
     }).setOrigin(0.5).setDepth(3);
     btn.on('pointerover', () => btn.setFillStyle(0x3f9fe8));
     btn.on('pointerout', () => btn.setFillStyle(0x2f7fd0));
     btn.on('pointerdown', () => this.scene.start('Game', { bgStart: this.bgPick }));
 
-    // 起始场景选择：四张授权背景缩略卡，首屏可见全部
-    this.add.text(GAME_W / 2, 288, '起始场景（局内每 60 秒自动轮换）', {
-      fontFamily: 'monospace', fontSize: '14px', color: '#8fb8d8'
+    this.add.text(GAME_W / 2, 266, '起始场景（局内每 60 秒自动轮换）', {
+      fontFamily: 'monospace', fontSize: '13px', color: '#7aa7c8'
     }).setOrigin(0.5).setDepth(2);
-    this.buildBgPicker();
+    this.buildBgPicker();   // 卡片 y=300，选中底名提示由 applyBg 显示在 y=336
 
-    // 商店
-    this.add.text(GAME_W / 2, 352, '— 永久强化（金币保留，越打越强）—', {
-      fontFamily: 'monospace', fontSize: '16px', color: '#8fb8d8'
+    // ============ 独立面板②：永久强化商店 ============
+    this.add.rectangle(GAME_W / 2, 516, 1160, 336, 0x0c1c2e, 0.88)
+      .setStrokeStyle(2, 0x2f6fc0).setDepth(1);
+    this.add.text(GAME_W / 2, 388, '— 永久强化（金币保留，越打越强）—', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#bcd8f0'
     }).setOrigin(0.5).setDepth(2);
 
-    this.goldText = this.add.text(GAME_W / 2, 382, `金币：${save.gold}`, {
+    this.goldText = this.add.text(GAME_W - 78, 388, `金币：${save.gold}`, {
       fontFamily: 'monospace', fontSize: '20px', color: '#ffd447'
-    }).setOrigin(0.5).setDepth(2);
+    }).setOrigin(1, 0.5).setDepth(2);
 
     this.buildShop(save.gold);
 
-    this.add.text(GAME_W / 2, GAME_H - 24, `触摸拖动 / WASD 移动 · 自动开火 · v${VERSION}`, {
+    this.add.text(GAME_W / 2, 662, '金币永久保留 · 强化效果跨局叠加 · 点击卡片购买', {
+      fontFamily: 'monospace', fontSize: '13px', color: '#54708c'
+    }).setOrigin(0.5).setDepth(2);
+
+    this.add.text(GAME_W / 2, GAME_H - 22, `触摸拖动 / WASD 移动 · 自动开火 · v${VERSION}`, {
       fontFamily: 'monospace', fontSize: '13px', color: '#54708c'
     }).setOrigin(0.5).setDepth(2);
 
@@ -90,25 +103,25 @@ export class MenuScene extends Phaser.Scene {
   // 四张背景卡：横排，高亮选中的一张；点选即换底图并记住起始背景
   private buildBgPicker(): void {
     const n = BG_ORDER.length;
-    const cardW = 150;
-    const cardH = 46;
-    const gap = 18;
+    const cardW = 140;
+    const cardH = 38;
+    const gap = 14;
     const totalW = cardW * n + gap * (n - 1);
     const startX = (GAME_W - totalW) / 2 + cardW / 2;
-    const y = 322;
+    const y = 300;
 
     for (let i = 0; i < n; i++) {
       const cx = startX + i * (cardW + gap);
-      const bg = this.add.rectangle(cx, y, cardW, cardH, i === this.bgPick ? 0x2f7fd0 : 0x101f33, 1)
+      const bg = this.add.rectangle(cx, y, cardW, cardH, i === this.bgPick ? 0x2f7fd0 : 0x16283f, 1)
         .setStrokeStyle(2, i === this.bgPick ? 0x9fe8ff : 0x3d6c9e)
         .setInteractive({ useHandCursor: true })
         .setDepth(2);
       const label = this.add.text(cx, y, BG_ORDER[i].name, {
-        fontFamily: 'monospace', fontSize: '16px',
+        fontFamily: 'monospace', fontSize: '15px',
         color: i === this.bgPick ? '#ffffff' : '#bcd8f0'
       }).setOrigin(0.5).setDepth(3);
       bg.on('pointerover', () => bg.setFillStyle(i === this.bgPick ? 0x2f7fd0 : 0x1f3a5f));
-      bg.on('pointerout', () => bg.setFillStyle(i === this.bgPick ? 0x2f7fd0 : 0x101f33));
+      bg.on('pointerout', () => bg.setFillStyle(i === this.bgPick ? 0x2f7fd0 : 0x16283f));
       bg.on('pointerdown', () => this.pickBg(i));
       this.bgCards.push(bg);
       this.bgLabels.push(label);
@@ -121,13 +134,13 @@ export class MenuScene extends Phaser.Scene {
     this.applyBg();
     for (let k = 0; k < this.bgCards.length; k++) {
       const sel = k === this.bgPick;
-      this.bgCards[k].setFillStyle(sel ? 0x2f7fd0 : 0x101f33);
+      this.bgCards[k].setFillStyle(sel ? 0x2f7fd0 : 0x16283f);
       this.bgCards[k].setStrokeStyle(2, sel ? 0x9fe8ff : 0x3d6c9e);
       this.bgLabels[k].setColor(sel ? '#ffffff' : '#bcd8f0');
     }
   }
 
-  // 底图按当前选自换纹理 + cover 铺满 + 名字提示
+  // 底图按当前选自换纹理 + cover 铺满 + 名字提示（在开始面板底部）
   private applyBg(): void {
     const phase = BG_ORDER[this.bgPick];
     this.bgImage.setTexture(phase.key);
@@ -136,20 +149,20 @@ export class MenuScene extends Phaser.Scene {
     this.bgImage.setDisplaySize(cover.w, cover.h);
     this.bgImage.setDepth(0);
     if (this.bgNameText) this.bgNameText.destroy();
-    this.bgNameText = this.add.text(GAME_W / 2, 264, `起始：${phase.name}  ·  点击开始进入`, {
-      fontFamily: 'monospace', fontSize: '13px', color: '#9fd8ff'
+    this.bgNameText = this.add.text(GAME_W / 2, 336, `起始：${phase.name}  ·  点击开始进入`, {
+      fontFamily: 'monospace', fontSize: '12px', color: '#9fd8ff'
     }).setOrigin(0.5).setDepth(2);
   }
 
   private buildShop(gold: number): void {
     const cols = 3;
-    const cardW = 320;
-    const cardH = 74;
-    const gapX = 30;
-    const gapY = 14;
+    const cardW = 348;
+    const cardH = 78;
+    const gapX = 26;
+    const gapY = 16;
     const totalW = cardW * cols + gapX * (cols - 1);
     const startX = (GAME_W - totalW) / 2 + cardW / 2;
-    const startY = 424;
+    const startY = 432;
 
     META_TREE.forEach((m, i) => {
       const col = i % cols;
@@ -162,13 +175,13 @@ export class MenuScene extends Phaser.Scene {
       const maxed = rank >= m.maxRank;
       const cost = m.cost(rank);
 
-      const card = this.add.rectangle(cx, cy, cardW, cardH, 0x101f33, 1)
+      const card = this.add.rectangle(cx, cy, cardW, cardH, 0x14263c, 1)
         .setStrokeStyle(2, maxed ? 0x4de8c2 : 0x3d6c9e)
         .setDepth(2);
       this.add.text(cx - cardW / 2 + 14, cy - cardH / 2 + 12, `${m.name}  Lv.${rank}/${m.maxRank}`, {
         fontFamily: 'monospace', fontSize: '16px', color: '#eaf6ff'
       }).setDepth(3);
-      this.add.text(cx - cardW / 2 + 14, cy - cardH / 2 + 36, m.desc, {
+      this.add.text(cx - cardW / 2 + 14, cy - cardH / 2 + 40, m.desc, {
         fontFamily: 'monospace', fontSize: '12px', color: '#8fb8d8'
       }).setDepth(3);
       const priceLabel = maxed ? '已满级' : `${cost} 金币`;

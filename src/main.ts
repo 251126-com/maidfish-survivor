@@ -7,6 +7,7 @@ import { MenuScene } from './scenes/MenuScene.ts';
 import { GameScene } from './scenes/GameScene.ts';
 import { ResultScene } from './scenes/ResultScene.ts';
 import { sfx } from './core/audio.ts';
+import { toggleFullscreen, isFullscreen, uaKind, type FsRequest } from './core/fullscreen.ts';
 import { VERSION } from './config/version.ts';
 import { BG_ORDER, BG_SWITCH_SEC } from './config/background.ts';
 import { RICE_DROP_CHANCE, BOWL_DROP_CHANCE, RICE_HEAL, ARMOR_MAX } from './config/balance.ts';
@@ -62,4 +63,47 @@ dbg.__LOOT_MARK = {
   bowlChance: BOWL_DROP_CHANCE,
   riceHeal: RICE_HEAL,
   armorMax: ARMOR_MAX
+};
+// ---------- v0.9.0 全屏适配（必须在用户手势内调用 Fullscreen API） ----------
+//  - fullscreenchange / webkitfullscreenchange → game.scale.refresh() 重算 FIT 布局
+//    （进入/退出全屏、用户按 F11/Esc 都会触发，画布尺寸变化后立即重排，避免黑边/拉伸）
+//  - iOS Safari 不支持元素级全屏(video 除外)：点全屏按钮时给轻量 toast 提示
+//  - 浏览器自动播放策略：任意首次用户手势统一解锁音频（菜单/游戏都成立）
+const refreshScale = () => game.scale.refresh();
+document.addEventListener('fullscreenchange', refreshScale);
+document.addEventListener('webkitfullscreenchange', refreshScale);
+
+// iOS 轻提示：临时 DOM toast（不干扰 Phaser，自动消失）
+let fsToastEl: HTMLDivElement | null = null;
+function fsToast(msg: string): void {
+  if (fsToastEl) fsToastEl.remove();
+  fsToastEl = document.createElement('div');
+  fsToastEl.textContent = msg;
+  fsToastEl.style.cssText = [
+    'position:fixed', 'left:50%', 'bottom:96px',
+    'transform:translateX(-50%)', 'z-index:9999',
+    'background:rgba(6,12,22,.92)', 'color:#ffd447',
+    'border:1px solid #3d6c9e', 'border-radius:10px',
+    'padding:10px 16px', 'font:14px monospace',
+    'pointer-events:none', 'white-space:nowrap', 'user-select:none'
+  ].join(';');
+  document.body.appendChild(fsToastEl);
+  window.setTimeout(() => { if (fsToastEl) { fsToastEl.remove(); fsToastEl = null; } }, 1800);
+}
+
+const unlockAudio = () => sfx.unlock();
+window.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
+window.addEventListener('keydown', unlockAudio, { once: true });
+
+// 全屏切换统一入口：供悬浮菜单按钮调用（返回结果给 UI 更新文案）
+const FS_KIND = uaKind(navigator.userAgent);
+(dbg as typeof dbg & { __FS?: { kind: string; toggle: () => FsRequest; isFullscreen: () => boolean } }).__FS = {
+  kind: FS_KIND,
+  isFullscreen: () => isFullscreen(),
+  toggle: () => {
+    const r = toggleFullscreen(document.getElementById('game'), FS_KIND);
+    if (r === 'unsupported') fsToast('iOS 不支持全屏，请用浏览器自带全屏');
+    else if (r === 'pending') fsToast('当前浏览器不支持全屏');
+    return r;
+  }
 };

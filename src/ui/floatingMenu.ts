@@ -173,6 +173,8 @@ export class FloatingMenu {
         this.refreshLabels();
         break;
       case 'full':
+        // 优先走 main.ts 注入的 __FS 统一入口（含 iOS 轻提示与 fullscreenchange 刷新）；
+        // 旧浏览器无该钩子时退化走本面板自带逻辑
         this.toggleFullscreen();
         vibrate(12);
         this.refreshLabels();
@@ -195,8 +197,14 @@ export class FloatingMenu {
     if (f) f.text.setText(this.isFullscreen() ? '⛶ 退出全屏' : '⛶ 全屏');
   }
 
-  // Fullscreen API（含 webkit 前缀降级）：必须在用户手势内调用
+  // Fullscreen API（含 webkit 前缀降级）：必须在用户手势内调用。
+  // 先用 main.ts 注入的 __FS 统一入口（iOS 轻提示由 main.ts 展示），没有则退化本地实现
   private toggleFullscreen(): void {
+    const gfs = (window as unknown as { __FS?: { toggle: () => unknown } }).__FS;
+    if (gfs && typeof gfs.toggle === 'function') {
+      gfs.toggle();
+      return;
+    }
     const doc = document as Document & { webkitExitFullscreen?: () => Promise<void>; webkitFullscreenElement?: Element | null };
     const canvas = this.scene.game.canvas as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
     if (this.isFullscreen()) {
