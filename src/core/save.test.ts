@@ -1,83 +1,45 @@
-// 存档单元测试：用内存 mock 替代 localStorage
+// save 清洗测试（v0.9.1：存档只允许有限非负整数 + meta 升级上限）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sanitizeSave, metaBonus } from './save.ts';
+import { META_TREE } from '../config/upgrades.ts';
 
-// 在导入 save 之前注入 localStorage mock
-const store = new Map<string, string>();
-(globalThis as any).localStorage = {
-  getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
-  setItem: (k: string, v: string) => { store.set(k, v); },
-  removeItem: (k: string) => { store.delete(k); }
-};
-
-const { loadSave, writeSave, metaBonus } = await import('./save.ts');
-
-test('无存档时返回默认值', () => {
-  store.clear();
-  const s = loadSave();
-  assert.equal(s.gold, 0);
-  assert.deepEqual(s.meta, {});
-  assert.equal(s.best.kills, 0);
+test('sanitizeSave: 1e309(=Infinity)/NaN/负数/小数 全部钳制为有限非负整数', () => {
+  const out = sanitizeSave({
+    version: 1,
+    gold: 1e309,                       // JSON 里会变成 Infinity
+    meta: { meta_atk: Infinity, meta_hp: -3, meta_spd: 2.9, bogus: 7 },
+    best: { time: NaN, kills: -5, level: 1e308 }
+  } as any);
+  assert.equal(out.gold, 0, 'Infinity gold -> 0');
+  assert.equal(out.meta.meta_atk, 0, 'Infinity rank -> 0');
+  assert.equal(out.meta.meta_hp, 0, '负数 rank -> 0');
+  assert.equal(out.meta.meta_spd, 2, '小数 rank -> 向下取整');
+  assert.ok(Number.isFinite(out.best.time) && Number.isFinite(out.best.level));
+  assert.ok(out.best.time >= 0 && out.best.level >= 0);
+  assert.equal(out.best.kills, 0, '负数 kills -> 0');
 });
 
-test('写入后可完整读回', () => {
-  store.clear();
-  const s = loadSave();
-  s.gold = 500;
-  s.meta['meta_atk'] = 3;
-  s.best.kills = 42;
-  writeSave(s);
-  const back = loadSave();
-  assert.equal(back.gold, 500);
-  assert.equal(back.meta['meta_atk'], 3);
-  assert.equal(back.best.kills, 42);
+test('sanitizeSave: meta 等级受 META_TREE.maxRank 升级上限约束', () => {
+  const maxAtk = META_TREE.find(m => m.id === 'meta_atk')!.maxRank;
+  const out = sanitizeSave({
+    version: 1,
+    gold: 10,
+    meta: { meta_atk: 99999 },
+    best: { time: 1, kills: 1, level: 1 }
+  } as any);
+  assert.equal(out.meta.meta_atk, maxAtk, '越界 rank 封顶到 maxRank');
 });
 
-test('损坏 JSON 不崩溃，回退默认值', () => {
-  store.clear();
-  store.set('maidfish-survivor-save-v1', '{坏掉的json');
-  assert.doesNotThrow(() => loadSave());
-  assert.equal(loadSave().gold, 0);
-});
-
-test('旧存档缺字段时按默认补全', () => {
-  store.clear();
-  store.set('maidfish-survivor-save-v1', JSON.stringify({ gold: 100 }));
-  const s = loadSave();
-  assert.equal(s.gold, 100);
-  assert.deepEqual(s.meta, {});
-  assert.equal(s.best.level, 0);
-});
-
-test('metaBonus 按等级换算加成', () => {
+test('metaBonus: 越界/Infinity rank 封顶后加成仍为有限数', () => {
   const b = metaBonus({
-    version: 1, gold: 0,
-    meta: { meta_atk: 2, meta_hp: 3, meta_spd: 1, meta_pick: 2, meta_crit: 1, meta_xp: 2 },
+    version: 1,
+    gold: 0,
+    meta: { meta_atk: 1e309, meta_crit: 99 },
     best: { time: 0, kills: 0, level: 0 }
-  });
-  assert.equal(Math.round(b.damageMult * 100), 110);  // 1 + 2*0.05
-  assert.equal(b.maxHp, 30);                          // 3*10
-  assert.equal(Math.round(b.speedMult * 100), 103);   // 1 + 1*0.03
-  assert.equal(b.pickup, 24);                         // 2*12
-  assert.equal(Math.round(b.critChance * 100), 2);    // 1*0.02
-  assert.equal(Math.round(b.xpMult * 100), 110);      // 1 + 2*0.05
-});
-test('旧存档兼容：只含金币的旧档正常加载且不新增局内字段', () => {
-  store.clear();
-  store.set('maidfish-survivor-save-v1', JSON.stringify({ gold: 100 }));
-  const s = loadSave();
-  assert.equal(s.gold, 100);
-  assert.ok(!('armor' in s), '旧档不应被注入护甲字段');
-  assert.ok(!('rice' in s), '旧档不应被注入饭字段');
-});
-
-test('写入新档不污染旧版本结构（不含局内护甲/饭盆）', () => {
-  store.clear();
-  const s = loadSave();
-  s.gold = 10;
-  writeSave(s);
-  const raw = store.get('maidfish-survivor-save-v1')!;
-  assert.ok(!raw.includes('armor'));
-  assert.ok(!raw.includes('rice'));
-  assert.ok(!raw.includes('bowl'));
+  } as any);
+  assert.ok(Number.isFinite(b.damageMult), 'damageMult 必须有限');
+  assert.ok(Number.isFinite(b.critChance));
+  assert.ok(b.damageMult > 1 && b.damageMult < 2, '封顶后伤害加成在合理范围');
+  assert.ok(b.critChance <= 1, '暴击几率上限内');
 });

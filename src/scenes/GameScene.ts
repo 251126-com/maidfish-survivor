@@ -211,6 +211,7 @@ export class GameScene extends Phaser.Scene {
     // 场景退出时解绑输入监听，避免重复绑定
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       if (this.enemyBullets) this.enemyBullets.pool.releaseAll();
+      this.player.destroy();   // v0.9.1：幂等销毁玩家 display 对象，退出/重开不泄漏
       this.bossTeleG?.destroy();
       this.bossBannerText?.destroy();
       this.bgLayer.destroy();
@@ -661,10 +662,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   // 拾取反馈浮动文本：玩家头顶升起、淡出、自动销毁
+  // v0.9.1 修复：世界坐标 + scrollFactor(0) 会在相机滚动后出现在屏外/错位 → 改世界跟随(1)，与伤害数字一致
   private showPickupFeedback(text: string, color: number): void {
     const t = this.add.text(this.player.x, this.player.y - 68, text, {
       fontFamily: 'monospace', fontSize: '16px', color: `#${color.toString(16).padStart(6, '0')}`
-    }).setOrigin(0.5).setDepth(40).setScrollFactor(0);
+    }).setOrigin(0.5).setDepth(40).setScrollFactor(1);
     this.tweens.add({
       targets: t,
       y: t.y - 34,
@@ -807,8 +809,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private finish(win: boolean): void {
-    if (this.isOver) return;
+    if (this.isOver) return;   // 单次结算：胜负只结算一次
     this.isOver = true;
+    // v0.9.1：胜负表情真实可见 —— 冻结前用胜负标志补渲一帧；此后 update 因 isOver 冻结，伤害全部停止
+    if (win) this.player.setWin(true); else this.player.setLose(true);
+    this.player.update(0.016, 0, 0);
     if (win) sfx.win(); else sfx.lose();
 
     // 局内金币入档
@@ -826,6 +831,7 @@ export class GameScene extends Phaser.Scene {
       level: this.levelSys.level,
       gold: this.gold
     };
-    this.scene.start('Result', data);
+    // 展示胜负表情 1.1s 后再进结算场景
+    this.time.delayedCall(1100, () => this.scene.start('Result', data));
   }
 }

@@ -237,9 +237,9 @@ export class Player {
     this.invuln = 0.6;
     this.flash = 0.15;
     this.hitSquash = 1;               // 受击挤压
-    // 有护甲吸收时用橙红反馈，无护甲用常规红色
-    this.sprite.setTint(this.armor.armor > 0 ? 0xff9a5c : 0xff6b6b);
-    if (this.bowlSpr.visible) this.bowlSpr.setTint(0xff9a5c);
+    // v0.9.1: 破甲tint以本次受伤是否被护甲吸收为准(absorbed>0)
+    this.sprite.setTint(r.absorbed > 0 ? 0xff9a5c : 0xff6b6b);
+    if (this.bowlSpr.visible) this.bowlSpr.setTint(r.absorbed > 0 ? 0xff9a5c : 0xff6b6b);
     // 受击后仰位移：离开命中来源的方向
     let kx = -this.facing, ky = 0;
     if (fromX !== undefined && fromY !== undefined) {
@@ -300,7 +300,12 @@ export class Player {
   get armorValue(): number { return this.armor.armor; }
   get armorMax(): number { return this.armor.max; }
 
+  private destroyed = false;
+
+  // v0.9.1: idempotent destroy, safe for repeated calls
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.sprite.destroy();
     this.bowlSpr.destroy();
     this.fx.destroy();
