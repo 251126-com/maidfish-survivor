@@ -1,7 +1,7 @@
 // 连杀系统单测：窗口期连续累计、断档清零、里程碑判定
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { KillStreak } from './killStreak.ts';
+import { KillStreak, streakHeat } from './killStreak.ts';
 
 test('窗口期内连续击杀递增连杀数', () => {
   const s = new KillStreak(3.0);
@@ -45,4 +45,13 @@ test('里程碑：仅在达到 n 的倍数时为 true', () => {
 test('连杀数为 0 时不触发里程碑', () => {
   const s = new KillStreak(3.0);
   assert.equal(s.isMilestone(5), false);
+});
+
+// v0.13.0 连杀热度映射单测
+test('连杀热度：0 连杀为 0、单调递增、15 连杀封顶 1', () => {
+  assert.equal(streakHeat(0), 0);
+  assert.ok(streakHeat(5) > streakHeat(1));
+  assert.equal(streakHeat(15), 1);
+  assert.equal(streakHeat(99), 1, '超过 15 连杀应封顶');
+  assert.ok(streakHeat(10) <= 1 && streakHeat(10) > 0);
 });

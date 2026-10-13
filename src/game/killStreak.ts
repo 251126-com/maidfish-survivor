@@ -32,3 +32,10 @@ export class KillStreak {
   get current(): number { return this.count; }
   get timeLeft(): number { return Math.max(0, this.remaining); }
 }
+
+// v0.13.0 连杀热度（纯函数，可单测）：0..1 的强度映射，用于
+// 枪口火焰变红 / 屏幕边缘泛红的视觉强度。连杀 15 到满，10 以下线性渐变。
+export function streakHeat(streak: number): number {
+  if (streak <= 0) return 0;
+  return Math.min(1, streak / 15);
+}

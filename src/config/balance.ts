@@ -8,11 +8,13 @@ export const WORLD_H = 4000;
 
 // 单局时长与 Boss 触发点（秒）
 export const GAME_DURATION = 12 * 60;
-// v0.10.0: Boss 从 600s 提前到 150s（120~180s 区间），普通玩家一局内必然能看到。
-// 保留完整三技能预警：Boss 出现更早，但血量固定不随时间膨胀（见 enemySystem.spawn）。
-export const BOSS_TIME = 150;
-// Boss 登场前预警横幅的提前量（秒）
+// v0.13.0: Boss 从 150s 推迟到 270s（240~270s 有翻倍刷怪+预告的压迫期，270s 必然登场）。
+// 保留完整三技能预警：Boss 血量固定不随时间膨胀（见 enemySystem.spawn）。
+export const BOSS_TIME = 270;
+// Boss 登场前最终预警横幅的提前量（秒）
 export const BOSS_WARN_TIME = 5;
+// v0.13.0: Boss 前 30s 的"逼近期"：刷怪频率翻倍 + "Boss 要来了"预告横幅（秒）
+export const BOSS_APPROACH_TIME = 30;
 
 // 玩家基础属性（永久强化在此基础上加成）
 export const PLAYER_BASE = {

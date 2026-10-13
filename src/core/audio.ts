@@ -109,7 +109,24 @@ export class Sfx {
 
   shoot(): void {
     if (!this.throttle('shoot', 55)) return;
-    this.tone(900, 0.055, 'square', 0.07, 380);
+    // v0.13.0 水下闷响枪声：低通噪声（深海水压感）+ 低频正弦下坠
+    this.noise(0.10, 0.11, 320);
+    this.tone(150, 0.13, 'sine', 0.10, 58);
+  }
+
+  // v0.13.0 大白饭碗筷脆声：两颗高频短促"叮"（筷子碰瓷碗）
+  rice(): void {
+    if (!this.throttle('rice', 90)) return;
+    this.tone(2350, 0.05, 'sine', 0.10, 1800);
+    this.tone(3180, 0.045, 'sine', 0.07, 2560, 0.018);
+  }
+
+  // v0.13.0 铁盆金属铛：低频基音 + 偏高泛音长衰减（金属共鸣感）
+  bowlMetal(): void {
+    if (!this.throttle('bowl', 140)) return;
+    this.tone(620, 0.55, 'sine', 0.13, 605);
+    this.tone(1270, 0.38, 'triangle', 0.07, 1230, 0.006);
+    this.noise(0.07, 0.045, 2600);
   }
 
   sniper(): void {

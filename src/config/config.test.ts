@@ -1,7 +1,7 @@
 // 数值配置测试：经验曲线单调、刷怪时间轴选段正确、权重选取不越界
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { xpNeed, hpScale, speedScale, POOL_LIMIT, BOSS_TIME, BOSS_WARN_TIME, STARTER_ARMOR, ARMOR_MAX } from './balance.ts';
+import { xpNeed, hpScale, speedScale, POOL_LIMIT, BOSS_TIME, BOSS_WARN_TIME, BOSS_APPROACH_TIME, STARTER_ARMOR, ARMOR_MAX } from './balance.ts';
 import { currentPhase, pickEnemy, SPAWN_TIMELINE, WAVE_EVENTS } from './timeline.ts';
 import { WEAPONS, OBTAINABLE_WEAPONS } from './weapons.ts';
 import { ENEMIES } from './enemies.ts';
@@ -17,17 +17,24 @@ test('v0.10: 首次升级门槛下调（1级仅需 ~14 经验，配合开局波�
   assert.ok(xpNeed(2) <= 34, `2级门槛 ${xpNeed(2)} 应低于旧版 33~35`);
 });
 
-test('v0.10: Boss 提前到 150s（玩家一局必然见到，且有预警提前量）', () => {
-  assert.equal(BOSS_TIME, 150, 'Boss 应提前到 150s');
+test('v0.13.0: Boss 推迟到 270s（前 30s 有翻倍刷怪+预告），玩家一局必然见到', () => {
+  assert.equal(BOSS_TIME, 270, 'Boss 应在 270s 登场');
+  assert.ok(BOSS_TIME >= 240, 'Boss 不应早于 240s（给够前期成长窗口）');
   assert.ok(BOSS_TIME < 600, '不应再是 600s 的远未来 Boss');
-  assert.ok(BOSS_WARN_TIME > 0 && BOSS_WARN_TIME < BOSS_TIME, 'Boss 预警提前量需在 (0, BOSS_TIME) 区间内');
+  assert.ok(BOSS_APPROACH_TIME > 0 && BOSS_APPROACH_TIME < BOSS_TIME, 'Boss 逼近预告需在 (0, BOSS_TIME) 区间内');
+  assert.ok(BOSS_WARN_TIME > 0 && BOSS_WARN_TIME < BOSS_APPROACH_TIME, '最终预警(5s)应短于逼近预告(30s)');
 });
 
-test('v0.10: 开局波次事件升序、0s 即有、半径小（进屏快）、敌人 id 合法', () => {
+test('v0.13.0: 波次事件升序、约每 30s 一波、0s 即有、半径小（进屏快）、敌人 id 合法', () => {
   assert.equal(WAVE_EVENTS[0].atSec, 0, '开局立即有一波');
   let prev = -1;
-  for (const ev of WAVE_EVENTS) {
+  for (let i = 0; i < WAVE_EVENTS.length; i++) {
+    const ev = WAVE_EVENTS[i];
     assert.ok(ev.atSec > prev, '波次时间必须严格升序');
+    if (i > 0) {
+      const gap = ev.atSec - prev;
+      assert.ok(gap >= 25 && gap <= 35, `波次间隔应约 30s（实际 ${gap}s @ ${ev.atSec}s）`);
+    }
     prev = ev.atSec;
     assert.ok(ev.radius < 700, `波次生成半径 ${ev.radius} 应小于常规 760~980，保证 10s 内进屏`);
     assert.ok(ev.label.length > 0, '波次要有横幅文案');
@@ -36,27 +43,41 @@ test('v0.10: 开局波次事件升序、0s 即有、半径小（进屏快）、�
       assert.ok(n > 0, '波次数量必须为正');
     }
   }
+  assert.equal(WAVE_EVENTS[WAVE_EVENTS.length - 1].atSec, 240, '最后一波应是 Boss 前 30s 的增援波');
 });
 
-test('v0.10: 前 60s 刷怪节奏变密（间隔从 1100ms 提速），但 0s 阶段不刷屏', () => {
+test('v0.13.0: 波次/喘息交替节奏：波次比喘息密，喘息期明显放缓', () => {
   assert.equal(SPAWN_TIMELINE[0].fromSec, 0);
   assert.equal(SPAWN_TIMELINE[0].intervalMs, 1100, '开局 1100ms/只，可感知但可读');
-  const t60 = currentPhase(59).fromSec;
-  assert.ok(t60 <= 60, `60s 时应已进入更密阶段，当前 ${t60}s`);
-  assert.ok(currentPhase(59).intervalMs < 800, `60s 附近间隔应已提速，当前 ${currentPhase(59).intervalMs}ms`);
+  // 20~30s 是第一段喘息：比波次 0 明显更慢
+  const breath1 = currentPhase(25);
+  assert.ok(breath1.intervalMs >= 1400, `喘息期应明显放缓，当前 ${breath1.intervalMs}ms`);
+  // 30~50s 是第 1 波：比喘息更密，但 60s 内同屏上限不爆
+  const wave1 = currentPhase(40);
+  assert.ok(wave1.intervalMs <= 1000, `波次应比喘息密，当前 ${wave1.intervalMs}ms`);
+  assert.ok(wave1.maxAlive <= 32, `波次 1 同屏上限 ${wave1.maxAlive} 应克制（前 60s 不淹）`);
 });
 
-test('v0.10 finetune: 前60s同屏上限收紧，30s 前后不再被 40+ 敌群淹没', () => {
+test('v0.13.0: 前60s同屏上限克制，30s 波 dart 仅 1 只、60s 波 dart 仅 2 只（不淹不早灌）', () => {
   const early = SPAWN_TIMELINE.filter(p => p.fromSec < 60);
   for (const p_ of early) {
-    assert.ok(p_.maxAlive <= 90, `前60s阶段 ${p_.fromSec}s maxAlive=${p_.maxAlive} 应≤90`);
+    assert.ok(p_.maxAlive <= 32, `前60s阶段 ${p_.fromSec}s maxAlive=${p_.maxAlive} 应≤32`);
   }
   assert.ok(SPAWN_TIMELINE[0].maxAlive < 18, '开局同屏上限应低于 v0.10.0 初版的 18');
-  // 第2/3波不应再瞬间灌入疾行鱼（dart 移速 170，太早入场不公平）
-  const w2 = WAVE_EVENTS.find(w => w.atSec === 24);
-  const w3 = WAVE_EVENTS.find(w => w.atSec === 42);
-  assert.ok(w2 && w2.burst.find(b => b[0] === 'dart')?.[1] === 1, '24s 波 dart 应压到 1 只');
-  assert.ok(w3 && w3.burst.find(b => b[0] === 'dart')?.[1] === 2, '42s 波 dart 应压到 2 只');
+  // 疾行鱼（移速 170）过早大量入场不公平：30s 波 1 只、60s 波 2 只
+  const w1 = WAVE_EVENTS.find(w => w.atSec === 30);
+  const w2 = WAVE_EVENTS.find(w => w.atSec === 60);
+  assert.ok(w1 && w1.burst.find(b => b[0] === 'dart')?.[1] === 1, '30s 波 dart 应压到 1 只');
+  assert.ok(w2 && w2.burst.find(b => b[0] === 'dart')?.[1] === 2, '60s 波 dart 应压到 2 只');
+});
+
+test('v0.13.0: Boss 逼近期(240~270s)刷怪频率比之前波次明显翻倍，270s 后小怪减速', () => {
+  const pre = currentPhase(220);   // 210s 波次（Boss 前常规波）
+  const surge = currentPhase(250); // 240s 起 Boss 逼近期
+  const boss = currentPhase(280);  // 270s 起 Boss 战
+  assert.ok(surge.intervalMs < pre.intervalMs, `逼近期应比常规波更密：${surge.intervalMs} vs ${pre.intervalMs}ms`);
+  assert.ok(boss.intervalMs >= 1500, `Boss 战后小怪应减速，当前 ${boss.intervalMs}ms`);
+  assert.ok(currentPhase(250).maxAlive > currentPhase(220).maxAlive, '逼近期同屏上限应更高');
 });
 
 test('v0.10 finetune: 开局自带半份饭盆护盾（20/30），拾取仍可补满', () => {
@@ -72,7 +93,9 @@ test('敌人成长曲线随时间递增且有上限', () => {
 
 test('currentPhase 按时间取到正确阶段', () => {
   assert.equal(currentPhase(0).fromSec, 0);
-  assert.equal(currentPhase(100).fromSec, 60);
+  assert.equal(currentPhase(100).fromSec, 90, '90s 起应进入第 3 波');
+  assert.equal(currentPhase(245).fromSec, 240, '240s 起应进入 Boss 逼近期');
+  assert.equal(currentPhase(280).fromSec, 270, '270s 起应进入 Boss 战减速阶段');
   assert.equal(currentPhase(9999).fromSec, SPAWN_TIMELINE[SPAWN_TIMELINE.length - 1].fromSec);
 });
 

@@ -60,6 +60,8 @@ export class Player {
   private winFlag = false;
   private loseFlag = false;
   private gunRecoil = 0;      // 开火后坐（px，指数衰减）
+  // v0.13.0 连杀热度（0..n）：枪口火焰随连杀变红
+  private streak = 0;
 
   constructor(scene: Phaser.Scene, stats: PlayerStats) {
     this.scene = scene;
@@ -216,6 +218,24 @@ export class Player {
     this.recoilX = this.facing * -4;
     this.gunRecoil = 5;
     this.firingTimer = 0.09;
+    // v0.13.0 连杀越高枪口火焰越红（tint 强度随 streak 映射）
+    this.applyStreakTint();
+  }
+
+  /** v0.13.0 设置当前连杀数（GameScene 每次击杀后调用）；0 清零时清除枪口染色 */
+  setStreak(n: number): void {
+    this.streak = Math.max(0, Math.floor(n));
+    if (this.streak <= 0) this.gun.clearTint();
+  }
+
+  // 枪口火焰变红：白 → 红橙按热度(0..15 封顶)插值
+  private applyStreakTint(): void {
+    const heat = Math.min(1, this.streak / 15);
+    if (heat <= 0) { this.gun.clearTint(); return; }
+    const r = Math.round(255 - heat * 70);
+    const g = Math.round(255 - heat * 215);
+    const b = Math.round(255 - heat * 238);
+    this.gun.setTint((r << 16) | (g << 8) | b);
   }
 
   /** 瞄准目标（最近敌人）；由 GameScene 每帧设置，未设则枪朝正右 */

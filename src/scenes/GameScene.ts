@@ -3,7 +3,7 @@
 import Phaser from 'phaser';
 import {
   WORLD_W, WORLD_H, GAME_W, GAME_H, PLAYER_BASE, GAME_DURATION, BOSS_TIME, BOSS_WARN_TIME,
-  RICE_HEAL, ARMOR_MAX, ELITE_START_SEC, ELITE_SPAWN_INTERVAL, ELITE_MAX_ALIVE
+  BOSS_APPROACH_TIME, RICE_HEAL, ARMOR_MAX, ELITE_START_SEC, ELITE_SPAWN_INTERVAL, ELITE_MAX_ALIVE
 } from '../config/balance.ts';
 import { currentPhase, pickEnemy, WAVE_EVENTS } from '../config/timeline.ts';
 import { BG_ORDER, randomStartIndex } from '../config/background.ts';
@@ -25,6 +25,7 @@ import { LevelSystem, rollUpgradeOptions, type UpgradeOption } from '../game/lev
 import { shakeForEvent } from '../game/feel.ts';
 import { DeathFx } from '../game/deathFx.ts';
 import { hitStopSpec } from '../game/hitStop.ts';
+import { KillStreak, streakHeat } from '../game/killStreak.ts';
 import { Hud } from '../ui/hud.ts';
 import { LevelUpPanel } from '../ui/levelUpPanel.ts';
 import { FloatingMenu } from '../ui/floatingMenu.ts';
@@ -64,6 +65,7 @@ export class GameScene extends Phaser.Scene {
   private spawnTimer = 0;
   private bossSpawned = false;
   private bossWarned = false;      // v0.10.0 Boss 登场前预警已播
+  private bossApproachWarned = false; // v0.13.0 Boss 前 30s 逼近预告已播
   private waveIdx = 0;             // v0.10.0 开场波次事件指针
   private isOver = false;
   private finishTimer: FinishTimer | null = null;
@@ -77,6 +79,7 @@ export class GameScene extends Phaser.Scene {
   // v0.11.0 水母麻痹圈绘制层（深度在敌人之上、子弹之下）
   private jellyTeleG: Phaser.GameObjects.Graphics | null = null;
   private waveBannerText: Phaser.GameObjects.Text | null = null;
+  private waveEdgeG: Phaser.GameObjects.Graphics | null = null;   // v0.13.0 屏幕边缘预警横幅条
   // v0.12.0 精英：刷出计时 / 屏幕边缘闪光提示 / 发光边框层
   private eliteTimer = ELITE_START_SEC;
   private eliteWarn: { x: number; y: number; t: number } | null = null;
@@ -86,6 +89,9 @@ export class GameScene extends Phaser.Scene {
   // v0.12.0 连续拾取：2s 窗口内递增音调
   private pickupStreak = 0;
   private pickupStreakT = 0;
+  // v0.13.0 连杀视觉化：纯逻辑 KillStreak 接入 + 屏幕边缘连杀泛红
+  private killStreak: KillStreak | null = null;
+  private streakEdge: Phaser.GameObjects.Rectangle | null = null;
   // v0.12.0 底部状态条（回血绿/护甲蓝）
   private statusBar: Phaser.GameObjects.Text | null = null;
   // v0.10.0 打击感：死亡粒子 / 顿帧（v0.11.0 移除连杀横幅与里程碑顿帧）
@@ -95,6 +101,14 @@ export class GameScene extends Phaser.Scene {
   private paused = false;
   private pauseOverlay: Phaser.GameObjects.Rectangle | null = null;
   private pauseLabel: Phaser.GameObjects.Text | null = null;
+  // v0.13.0 开局漫画感引导（2-3 帧大字，点击跳过）
+  private guideActive = false;
+  private guideIdx = 0;
+  private guideOverlay: Phaser.GameObjects.Rectangle | null = null;
+  private guideFrames: Phaser.GameObjects.Text[] = [];
+  private guideDots: Phaser.GameObjects.Text[] = [];
+  private guideSkipText: Phaser.GameObjects.Text | null = null;
+  private guideClickHandler: (() => void) | null = null;
 
   constructor() { super('Game'); }
 
@@ -114,6 +128,8 @@ export class GameScene extends Phaser.Scene {
     this.bossSpawned = false;
     this.isOver = false;
     this.touchHintDone = false;
+    this.bossApproachWarned = false;
+    this.killStreak = new KillStreak(3.0);
     this.levelSys = new LevelSystem();
     this.passives = {};
 
@@ -189,6 +205,7 @@ export class GameScene extends Phaser.Scene {
       } else if (kind === 'rice') {
         // 大白饭：回血并钳制到最大 HP，浮字 + 绿环 + 底部状态条
         const healed = this.player.heal(RICE_HEAL);
+        sfx.rice();   // v0.13.0 碗筷清脆声
         sfx.pickup(this.pickupStreak);
         this.showPickupFeedback(`大白饭 回血+${Math.round(healed)}`, 0x7fe8a0);
         this.showPickupRing(0x4de8c2);
@@ -196,6 +213,7 @@ export class GameScene extends Phaser.Scene {
       } else if (kind === 'bowl') {
         // 铁盆：获得/刷新 30 护甲；已满则提示（不叠加超上限）
         const st = this.player.gainArmor();
+        sfx.bowlMetal();   // v0.13.0 铁盆金属铛声
         sfx.pickup(this.pickupStreak);
         this.showPickupFeedback(st === 'full' ? '铁盆 护甲已满' : `铁盆 护甲+${ARMOR_MAX}`, 0x6fb8ff);
         this.showPickupRing(0x4a9fe8);
@@ -241,6 +259,9 @@ export class GameScene extends Phaser.Scene {
     // 受击红晕：屏幕边缘闪一下，配合音效/震动给伤害反馈
     this.hurtFlash = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0xff2233, 0)
       .setDepth(160).setScrollFactor(0);
+    // v0.13.0 连杀泛红：独立红晕层（复用 hurtFlash 机制，避免与受击 tween 抢同一个对象）
+    this.streakEdge = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0xff3a1a, 0)
+      .setDepth(159).setScrollFactor(0);
 
     // 暂停遮罩：覆盖世界并提示点击继续（只在暂停时显示）
     this.pauseOverlay = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x060b14, 0.66)
@@ -277,7 +298,8 @@ export class GameScene extends Phaser.Scene {
       this.touchHintDone = true;
     });
 
-    this.showTouchHint();
+    // v0.13.0 开局漫画感引导（点击跳过；引导结束后再显示触控提示）
+    this.showGuide();
   }
 
   update(_time: number, delta: number): void {
@@ -287,6 +309,7 @@ export class GameScene extends Phaser.Scene {
       this.finishTimer = null;
       this.resultData = null;
     }
+    if (this.guideActive) return;     // v0.13.0 开局引导：冻结世界（计时/刷怪/升级都停）
     if (this.isOver || this.paused) return;
     if (this.panel.visible) return;   // 升级面板打开时暂停世界
 
@@ -298,6 +321,8 @@ export class GameScene extends Phaser.Scene {
     const rawDt = Math.min(delta / 1000, 0.05);
     const dt = rawDt * this.hitStopScale;   // v0.10.0 顿帧：大事件短暂放慢游戏时间
     this.elapsed += dt;
+    // v0.13.0 连杀窗口衰减（与游戏时间同步；升级面板/暂停冻结期间不衰减）
+    this.killStreak?.tick(dt);
 
     // 背景：跨过切换点就交叉淡入淡出下一张授权背景
     this.bgLayer.update(this.elapsed);
@@ -340,7 +365,7 @@ export class GameScene extends Phaser.Scene {
     this.enemies.pool.compact();
     this.drops.pool.compact();
 
-    this.updateHud();
+    this.updateHud(rawDt);
     this.checkEnd();
   }
 
@@ -430,6 +455,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateSpawner(dt: number): void {
+    // v0.13.0 Boss 前 30s 逼近预告：横幅（独立于波次位，用 Boss 横幅位）+ 提示增援
+    if (!this.bossApproachWarned && this.elapsed >= BOSS_TIME - BOSS_APPROACH_TIME) {
+      this.bossApproachWarned = true;
+      this.showBossBanner('⚠ Boss 要来了！增援逼近', '#ff9a4d');
+    }
     // Boss 登场前 BOSS_WARN_TIME 秒：预警横幅（只一次），给玩家提前走位/清小怪的时间
     if (!this.bossSpawned && !this.bossWarned && this.elapsed >= BOSS_TIME - BOSS_WARN_TIME) {
       this.bossWarned = true;
@@ -747,24 +777,39 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // 波次/连杀横幅（独立于 Boss 横幅位，避免互相顶掉）
+  // 波次横幅 + v0.13.0 屏幕边缘预警条（怪潮来袭的视觉提示，独立于 Boss 横幅位）
   private showWaveBanner(text: string, color = '#9fe8ff'): void {
     if (this.waveBannerText) this.waveBannerText.destroy();
-    this.waveBannerText = this.add.text(GAME_W / 2, 196, text, {
+    this.waveEdgeG?.destroy();
+    this.waveBannerText = this.add.text(GAME_W / 2, 202, text, {
       fontFamily: 'monospace', fontSize: '26px', color,
       stroke: '#062033', strokeThickness: 5
     }).setOrigin(0.5).setDepth(174).setScrollFactor(0).setAlpha(0);
+    // 屏幕顶部预警条：橙红色闪烁双线（边缘预警横幅）
+    this.waveEdgeG = this.add.graphics().setDepth(173).setScrollFactor(0);
+    const g = this.waveEdgeG;
+    const flash = Math.random() > 0.5 ? 0xff8a3a : 0xffd447;
+    g.lineStyle(6, flash, 0.95);
+    g.lineBetween(0, 0, GAME_W, 0);
+    g.lineStyle(4, 0xffd447, 0.75);
+    g.lineBetween(0, 6, GAME_W, 6);
     this.tweens.add({
       targets: this.waveBannerText,
-      alpha: 1, y: 186, duration: 180, ease: 'Cubic.easeOut',
+      alpha: 1, y: 190, duration: 180, ease: 'Cubic.easeOut',
       yoyo: true, hold: 800,
-      onComplete: () => { this.waveBannerText?.destroy(); this.waveBannerText = null; }
+      onComplete: () => {
+        this.waveBannerText?.destroy();
+        this.waveBannerText = null;
+        this.waveEdgeG?.destroy();
+        this.waveEdgeG = null;
+      }
     });
   }
 
-  // v0.10.0 顿帧：大事件(连杀里程碑/Boss击破)短暂放慢游戏时间制造"定格"手感；
-  // 用真实墙钟 setTimeout 恢复，不受游戏内时间缩放影响，绝不卡死。
-  private doHitStop(kind: 'milestone' | 'boss'): void {
+  // v0.10.0 顿帧：大事件(连杀里程碑/精英击杀/Boss击破)短暂放慢游戏时间制造"定格"手感；
+  // v0.13.0 新增 elite 档（精英击杀 0.05s 轻顿帧）。用真实墙钟 setTimeout 恢复，
+  // 不受游戏内时间缩放影响，绝不卡死。
+  private doHitStop(kind: 'milestone' | 'elite' | 'boss'): void {
     const now = performance.now();
     if (now < this.hitStopUntil) return;   // 已在顿帧中，不叠加
     const spec = hitStopSpec(kind);
@@ -792,9 +837,19 @@ export class GameScene extends Phaser.Scene {
     this.kills++;
     sfx.kill();
     vibrate(25);
-    // v0.10.0 击杀爆散：按敌人类型(鱼5/疾行5/肥鱼10/Boss30)池化粒子，克制数量保帧率
+    // v0.13.0 击杀爆散改为深海冒泡溶解粒子（上升+膨胀+透明消散），池化数量克制保帧率
     this.deathFx.burst(e.x, e.y, e.def.id);
-    // v0.11.0: 连杀横幅与里程碑顿帧已移除（去掉通报），仅保留击杀计数/爆散/音效。
+    // v0.13.0 连杀视觉化：接入纯逻辑 KillStreak，枪口火焰变红 + 屏幕边缘泛红（强度随连杀映射）
+    const streak = this.killStreak ? this.killStreak.add() : 1;
+    this.updateStreakVisual(streak);
+    // v0.13.0 精英击杀：轻顿帧(0.05s) + 轻震屏（Boss 另有更强档）
+    if (e.isElite) {
+      this.doHitStop('elite');
+      const st = shakeForEvent('elite');
+      this.cameras.main.shake(st.duration, st.intensity);
+      sfx.boss();
+      this.showPickupFeedback('精英击破！', 0xffd447);
+    }
     this.drops.spawn(e.x, e.y, 'xp', e.xp);
     if (Math.random() < e.goldChance) this.drops.spawn(e.x, e.y, 'gold', 1);
     // 特殊掉落：极低概率的大白饭/饭盆（默认 1.5% / 0.35%，见 balance.ts）
@@ -965,6 +1020,112 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  // v0.13.0 连杀视觉化：热度映射到枪口染色 + 屏幕边缘轻微泛红
+  private updateStreakVisual(streak: number): void {
+    if (!this.streakEdge) return;
+    this.player.setStreak(streak);
+    const heat = streakHeat(streak);
+    if (heat > 0) {
+      // 复用 hurtFlash 机制（屏幕边缘红晕），强度随连杀映射，上限低不与受击红晕叠太厚
+      this.streakEdge.setAlpha(Math.min(0.18, 0.02 + heat * 0.11));
+      this.tweens.add({
+        targets: this.streakEdge,
+        alpha: 0,
+        duration: 480,
+        ease: 'Linear',
+        onComplete: () => this.streakEdge?.setAlpha(0)
+      });
+    }
+  }
+
+  // v0.13.0 开局漫画感引导（轻量）：2-3 帧半透明底+大字，交代深海世界观，点击跳过。
+  // 引导期间游戏冻结（update 提前 return，波次计时/升级/刷怪都不走）。
+  private showGuide(): void {
+    const frameData: Array<{ title: string; body: string }> = [
+      {
+        title: '深海咖啡馆 · 鲸鱼娘',
+        body: '你是一只深海鲸鱼娘，\n守护着海底咖啡厅的和平'
+      },
+      {
+        title: '大白饭碗 · 铁盆',
+        body: '饭碗=武器，铁盆=护甲，\n大白饭=回血口粮！'
+      },
+      {
+        title: '波次 · 增援 · Boss',
+        body: '每 30s 一波怪潮，屏幕顶部会预警；\n270s 蓝色大肥鱼王登场！'
+      }
+    ];
+    this.guideActive = true;
+    this.guideIdx = 0;
+    this.guideOverlay = this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x06101c, 0.82)
+      .setDepth(190).setScrollFactor(0);
+    const titleStyle = {
+      fontFamily: 'monospace', fontSize: '42px', color: '#ffffff',
+      stroke: '#062033', strokeThickness: 6, align: 'center' as const
+    };
+    const bodyStyle = {
+      fontFamily: 'monospace', fontSize: '24px', color: '#cfeaff',
+      stroke: '#062033', strokeThickness: 4, align: 'center' as const, lineSpacing: 8
+    };
+    for (let i = 0; i < frameData.length; i++) {
+      const t = this.add.text(GAME_W / 2, GAME_H / 2 - 70, frameData[i].title, titleStyle)
+        .setOrigin(0.5).setDepth(192).setScrollFactor(0);
+      const b = this.add.text(GAME_W / 2, GAME_H / 2 + 30, frameData[i].body, bodyStyle)
+        .setOrigin(0.5).setDepth(192).setScrollFactor(0);
+      this.guideFrames.push(t, b);
+    }
+    for (let i = 0; i < frameData.length; i++) {
+      this.guideDots.push(this.add.text(GAME_W / 2 + (i - (frameData.length - 1) / 2) * 34, GAME_H - 88, '○', {
+        fontFamily: 'monospace', fontSize: '18px', color: '#9fe8ff'
+      }).setOrigin(0.5).setDepth(192).setScrollFactor(0));
+    }
+    this.guideSkipText = this.add.text(GAME_W - 24, GAME_H - 24, '点击 下一页 ▸', {
+      fontFamily: 'monospace', fontSize: '16px', color: '#9fe8ff'
+    }).setOrigin(1, 1).setDepth(192).setScrollFactor(0);
+    this.paintGuideFrame();
+    // 点击任意处：下一页 → 最后一帧再点开始游戏；同时解锁音频（用户手势）
+    this.guideClickHandler = () => {
+      sfx.unlock();
+      if (this.guideIdx < this.guideFrames.length / 2 - 1) {
+        this.guideIdx++;
+        this.paintGuideFrame();
+      } else {
+        this.dismissGuide();
+      }
+    };
+    this.input.on('pointerdown', this.guideClickHandler);
+    // 兜底：7s 后自动关闭，避免玩家误以为卡死
+    this.time.delayedCall(7000, () => this.dismissGuide());
+  }
+
+  private paintGuideFrame(): void {
+    const n = this.guideFrames.length / 2;
+    for (let i = 0; i < n; i++) {
+      this.guideFrames[i * 2].setVisible(i === this.guideIdx);
+      this.guideFrames[i * 2 + 1].setVisible(i === this.guideIdx);
+      this.guideDots[i]?.setText(i === this.guideIdx ? '●' : '○');
+    }
+    this.guideSkipText?.setText(this.guideIdx < n - 1 ? '点击 下一页 ▸' : '点击 开始游戏 ▸');
+  }
+
+  private dismissGuide(): void {
+    if (!this.guideActive) return;
+    this.guideActive = false;
+    if (this.guideClickHandler) {
+      this.input.off('pointerdown', this.guideClickHandler);
+      this.guideClickHandler = null;
+    }
+    for (const o of this.guideFrames) o.destroy();
+    for (const o of this.guideDots) o.destroy();
+    this.guideSkipText?.destroy();
+    this.guideOverlay?.destroy();
+    this.guideFrames = [];
+    this.guideDots = [];
+    this.guideSkipText = null;
+    this.guideOverlay = null;
+    this.showTouchHint();
+  }
+
   // 首局触控提示：明确告知"按住屏幕任意位置拖动移动"；首次触摸或 5 秒后淡出
   private showTouchHint(): void {
     if (this.touchHintDone) return;
@@ -1048,7 +1209,7 @@ export class GameScene extends Phaser.Scene {
     if (this.levelSys.pending > 0) this.checkLevelUp();
   }
 
-  private updateHud(): void {
+  private updateHud(dt = 0.016): void {
     let bossHp = 0;
     let bossMaxHp = 0;
     let bossName = '';
@@ -1084,7 +1245,7 @@ export class GameScene extends Phaser.Scene {
       elapsed: this.elapsed,
       weapons: this.weapons.owned.map(w => ({ name: w.def.name, level: w.level, maxed: w.maxed })),
       bossHp, bossMaxHp, bossName, bossPhase, bossWarning
-    });
+    }, dt);
   }
 
   private checkEnd(): void {

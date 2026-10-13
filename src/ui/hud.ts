@@ -77,6 +77,13 @@ export class Hud {
   private lastWeaponStr = '';
   private lastPauseLabel = '';
   private lastBgLabel = '';
+  // v0.13.0 HUD 平滑：显示值每帧向目标插值过渡；血条受伤残影缓降
+  private targetHp = 1;
+  private dispHp = 1;
+  private ghostHp = 1;
+  private lastDrawnGhost = -1;
+  private dispArmor = 0;
+  private dispXp = 0;
 
   constructor(scene: Phaser.Scene) {
     this.hpBar = scene.add.graphics().setDepth(100).setScrollFactor(0);
@@ -201,15 +208,21 @@ export class Hud {
     this.bgBtn.setStrokeStyle(2, name ? 0x6fc0ff : 0x3d6c9e);
   }
 
-  update(d: HudData): void {
-    // 经验条（顶部通栏）
-    if (d.xpRatio !== this.lastXp) {
-      this.lastXp = d.xpRatio;
+  update(d: HudData, dt = 0.016): void {
+    // v0.13.0 平滑系数：约每秒收敛 10 次（帧率无关）；残影更慢（约 1.6/s）
+    const kFast = 1 - Math.exp(-dt * 10);
+    const kGhost = 1 - Math.exp(-dt * 1.6);
+
+    // 经验条（顶部通栏）：每帧向目标插值
+    const tXp = Phaser.Math.Clamp(d.xpRatio, 0, 1);
+    this.dispXp += (tXp - this.dispXp) * kFast;
+    if (Math.abs(this.dispXp - this.lastXp) > 0.001) {
+      this.lastXp = this.dispXp;
       this.xpBar.clear();
       this.xpBar.fillStyle(0x0d1b2a, 0.9);
       this.xpBar.fillRect(0, 0, GAME_W, 10);
       this.xpBar.fillStyle(0x4de8c2, 1);
-      this.xpBar.fillRect(0, 0, GAME_W * Phaser.Math.Clamp(d.xpRatio, 0, 1), 10);
+      this.xpBar.fillRect(0, 0, GAME_W * this.dispXp, 10);
     }
 
     // XP 数字
@@ -219,14 +232,33 @@ export class Hud {
       this.xpText.setText(xpStr);
     }
 
-    // 血条
-    if (d.hp !== this.lastHp || d.maxHp !== this.lastMaxHp) {
-      this.lastHp = d.hp;
+    // 血条（v0.13.0）：每帧插值过渡 + 受伤残影缓降（暗红尾影追向当前值）
+    const tHp = Phaser.Math.Clamp(d.hp / d.maxHp, 0, 1);
+    if (d.maxHp !== this.lastMaxHp) {
       this.lastMaxHp = d.maxHp;
-      const ratio = Phaser.Math.Clamp(d.hp / d.maxHp, 0, 1);
+      // 上限变化（如升级加血）时强制校准显示与残影，避免残留错位条
+      this.targetHp = this.dispHp = this.ghostHp = tHp;
+      this.lastHp = -1;
+      this.lastDrawnGhost = -1;
+    }
+    const prevTarget = this.targetHp;
+    this.targetHp = tHp;
+    if (tHp < prevTarget - 0.0005) this.ghostHp = prevTarget;   // 受伤瞬间：残影停在受伤前值
+    this.ghostHp += (tHp - this.ghostHp) * kGhost;
+    this.dispHp += (tHp - this.dispHp) * kFast;
+    const moved = Math.abs(this.dispHp - this.lastHp) > 0.001 || Math.abs(this.ghostHp - this.lastDrawnGhost) > 0.001;
+    if (moved || this.lastHp === -1) {
+      this.lastHp = this.dispHp;
+      this.lastDrawnGhost = this.ghostHp;
+      const ratio = Phaser.Math.Clamp(this.dispHp, 0, 1);
       this.hpBar.clear();
       this.hpBar.fillStyle(0x000000, 0.5);
       this.hpBar.fillRoundedRect(20, 18, 244, 18, 6);
+      // 残影（缓降的暗红）先画，当前条压在上面
+      if (this.ghostHp > ratio + 0.006) {
+        this.hpBar.fillStyle(0xcc5a4a, 0.8);
+        this.hpBar.fillRoundedRect(22, 20, 240 * Phaser.Math.Clamp(this.ghostHp, 0, 1), 14, 5);
+      }
       this.hpBar.fillStyle(ratio > 0.5 ? 0x5ce86a : ratio > 0.25 ? 0xffcc44 : 0xff5555, 1);
       this.hpBar.fillRoundedRect(22, 20, 240 * ratio, 14, 5);
     }
@@ -236,18 +268,24 @@ export class Hud {
       this.hpText.setText(hpStr);
     }
 
-    // 护甲条：仅在护甲 > 0 时显示（蓝色），破甲后自动隐藏
-    if (d.armor !== this.lastArmor || d.armorMax !== this.lastArmorMax) {
-      this.lastArmor = d.armor;
+    // 护甲条（v0.13.0）：每帧插值过渡；破甲后显示值平滑降到 0 再隐藏
+    const tArmor = d.armorMax > 0 ? Phaser.Math.Clamp(d.armor / d.armorMax, 0, 1) : 0;
+    if (d.armorMax !== this.lastArmorMax) {
       this.lastArmorMax = d.armorMax;
+      this.dispArmor = tArmor;
+      this.lastArmor = -1;
+    }
+    this.dispArmor += (tArmor - this.dispArmor) * kFast;
+    const showArmor = this.dispArmor > 0.002 || tArmor > 0;
+    if (showArmor && (Math.abs(this.dispArmor - this.lastArmor) > 0.001 || this.lastArmor === -1)) {
+      this.lastArmor = this.dispArmor;
       this.armorBar.clear();
-      if (d.armor > 0) {
-        const ar = Phaser.Math.Clamp(d.armor / Math.max(1, d.armorMax), 0, 1);
-        this.armorBar.fillStyle(0x000000, 0.5);
-        this.armorBar.fillRoundedRect(20, 46, 244, 10, 5);
-        this.armorBar.fillStyle(0x6fb8ff, 1);
-        this.armorBar.fillRoundedRect(22, 48, 240 * ar, 6, 3);
-      }
+      this.armorBar.fillStyle(0x000000, 0.5);
+      this.armorBar.fillRoundedRect(20, 46, 244, 10, 5);
+      this.armorBar.fillStyle(0x6fb8ff, 1);
+      this.armorBar.fillRoundedRect(22, 48, 240 * Phaser.Math.Clamp(this.dispArmor, 0, 1), 6, 3);
+    } else if (!showArmor && this.armorBar.visible) {
+      this.armorBar.clear();
     }
     const armorStr = d.armor > 0 ? `🛡 护甲 ${Math.max(0, Math.ceil(d.armor))} / ${Math.ceil(d.armorMax)}` : '';
     if (armorStr !== this.lastArmorStr) {
