@@ -9,7 +9,7 @@ import { BG_ORDER, randomStartIndex } from '../config/background.ts';
 import { META_TREE } from '../config/upgrades.ts';
 import { DEFAULT_SKIN, SKIN_BOWL, SKIN_MAID, SKINS, isSkinId, type SkinId } from '../config/characters.ts';
 import { loadSave, writeSave, setSkin } from '../core/save.ts';
-import { faceScreenOffset } from '../game/playerFx.ts';
+import { FACE, BOWLHEAD, faceScreenOffset, bowlheadFaceOffset, bowlheadFxScale, blinkState } from '../game/playerFx.ts';
 import { VERSION } from '../config/version.ts';
 import { glassButton, drawGlass, type GlassButton } from '../ui/glassUI.ts';
 
@@ -35,6 +35,21 @@ export class MenuScene extends Phaser.Scene {
   private shopC: Phaser.GameObjects.Container | null = null;
   private bgC: Phaser.GameObjects.Container | null = null;
 
+  // v0.16.0 活的鲸鱼层 + 金鱼 + 玻璃高光
+  private whaleC: Phaser.GameObjects.Container | null = null;
+  private whaleFx!: Phaser.GameObjects.Image;
+  private whaleT = 0;
+  private whaleSleep = false;
+  private sleepTimer = 15 + Math.random() * 6;
+  private sleepDur = 0;
+  private whaleSpitTimer: Phaser.Time.TimerEvent | null = null;
+  private zzz: Phaser.GameObjects.Text[] = [];
+  private fish: Array<{
+    img: Phaser.GameObjects.Image; x0: number; x1: number; y: number;
+    spd: number; ph: number; amp: number; wiggle: number;
+  }> = [];
+  private streaks: Phaser.GameObjects.Image[] = [];
+
   constructor() { super('Menu'); }
 
   create(): void {
@@ -47,6 +62,8 @@ export class MenuScene extends Phaser.Scene {
     this.buildSeafloor();
     this.buildBubbles();
     this.buildWhale();
+    this.buildFish();
+    this.buildGlassHighlights();
 
     // ============ 顶部信息（融于水面的蓝白文字） ============
     this.add.text(GAME_W / 2, 54, '鲸鱼娘 · 割草求生', {
@@ -129,10 +146,12 @@ export class MenuScene extends Phaser.Scene {
     };
   }
 
-  // ---- 每帧：水草摇曳（容器段 x 正弦偏移，无重绘、开销可控） ----
+  // ---- 每帧：水草摇曳 + 鲸鱼游动/眨眼/睡觉 + 金鱼巡游（全部容器正弦变换，无重绘） ----
   private seaT = 0;
   update(_t: number, delta: number): void {
-    this.seaT += delta / 1000;
+    const dt = delta / 1000;
+    this.seaT += dt;
+    // 水草摇曳
     for (let i = 0; i < this.seaweeds.length; i++) {
       const c = this.seaweeds[i];
       const kids = c.list as Phaser.GameObjects.Rectangle[];
@@ -142,10 +161,53 @@ export class MenuScene extends Phaser.Scene {
         seg.angle = Math.sin(this.seaT * seg.ph + i * 1.7) * (1 + j * 1.6);
       }
     }
+    // 鲸鱼
+    this.updateWhale(dt);
+    // 金鱼巡游（往返 + 摆尾 + 起伏）
+    for (const f of this.fish) {
+      const k = 0.5 + 0.5 * Math.sin(this.seaT * f.spd + f.ph);
+      f.img.x = f.x0 + (f.x1 - f.x0) * k;
+      f.img.y = f.y + Math.sin(this.seaT * 0.75 + f.ph * 2.3) * f.amp;
+      const dir = Math.cos(this.seaT * f.spd + f.ph) >= 0 ? 1 : -1;
+      f.img.setFlipX(dir < 0);
+      f.img.rotation = Math.sin(this.seaT * f.spd * 0.85 + f.ph) * 0.13 * dir * f.wiggle;
+    }
+  }
+
+  private updateWhale(dt: number): void {
+    const t = this.whaleT += dt;
+    // 睡觉周期：醒 15±3s → 睡 4.2~6s（自动切换，眨眼则持续穿插）
+    if (this.whaleSleep) {
+      this.sleepDur -= dt;
+      if (this.sleepDur <= 0) { this.whaleSleep = false; this.sleepTimer = 15 + Math.random() * 6; }
+    } else {
+      this.sleepTimer -= dt;
+      if (this.sleepTimer <= 0) { this.whaleSleep = true; this.sleepDur = 4.2 + Math.random() * 1.8; }
+    }
+    // 游动：水平漂移 + 身体起伏 + 尾巴摆动（旋转） + 呼吸缩放；睡觉时放缓
+    const amp = this.whaleSleep ? 0.3 : 1;
+    const x = 330 + Math.sin(t * 0.34) * 46 * amp;
+    const y = 320 + Math.sin(t * 0.55) * 10 * amp;
+    const rot = 0.06 + Math.sin(t * 0.9) * 0.055 * amp;
+    const sc = 1 + Math.sin(t * 1.35) * 0.012 * amp;
+    this.whaleC?.setPosition(x, y);
+    this.whaleC?.setRotation(rot);
+    this.whaleC?.setScale(sc);
+    // 眨眼（帧率无关）/ 睡觉闭眼
+    if (this.whaleFx) this.whaleFx.setTexture(this.whaleSleep || blinkState(t) ? 'fx_blink' : 'fx_idle');
+    // Zzz 仅睡觉时显示（错峰循环动画常驻，醒时隐藏）
+    for (const z of this.zzz) z.setVisible(this.whaleSleep);
   }
 
   // ---- 水面基底：Canvas 渐变 + 顶部柔光斑（一次性纹理） ----
   private buildWaterBase(): void {
+    // v0.16.0 概念图背景（明亮粉蓝鱼缸 1280x720）；加载失败/缺失时回退程序化渐变
+    if (this.textures.exists('lobby_bg')) {
+      this.add.image(0, 0, 'lobby_bg').setOrigin(0, 0).setDepth(0);
+      // 轻暗化保证玻璃 UI/文字可读（概念图偏亮）
+      this.add.rectangle(GAME_W / 2, GAME_H / 2, GAME_W, GAME_H, 0x081a30, 0.24).setDepth(0.05);
+      return;
+    }
     if (!this.textures.exists('lobby_grad')) {
       const c = document.createElement('canvas');
       c.width = GAME_W; c.height = GAME_H;
@@ -221,11 +283,14 @@ export class MenuScene extends Phaser.Scene {
   // ---- 海底：砂砾 + 卵石 + 三丛水草（容器段做摇曳，见 update） ----
   private buildSeafloor(): void {
     const g = this.add.graphics().setDepth(2);
-    // 砂砾带（两层，前浅后深）
-    g.fillStyle(0x8a6a3a, 0.5);
-    g.fillEllipse(GAME_W / 2, GAME_H + 24, 1500, 150);
-    g.fillStyle(0xa98c50, 0.35);
-    g.fillEllipse(GAME_W / 2, GAME_H + 12, 900, 80);
+    // 概念图自带粉底砂地 → 不再叠程序化大砂带（只保留卵石与水草，避免糊底）
+    if (!this.textures.exists('lobby_bg')) {
+      // 砂砾带（两层，前浅后深）
+      g.fillStyle(0x8a6a3a, 0.5);
+      g.fillEllipse(GAME_W / 2, GAME_H + 24, 1500, 150);
+      g.fillStyle(0xa98c50, 0.35);
+      g.fillEllipse(GAME_W / 2, GAME_H + 12, 900, 80);
+    }
     // 卵石
     g.fillStyle(0x5b7896, 0.55);
     g.fillEllipse(210, GAME_H - 28, 34, 16);
@@ -275,81 +340,133 @@ export class MenuScene extends Phaser.Scene {
     }
   }
 
-  // ---- 鲸鱼娘：睡觉（闭眼 + Zzz + 呼吸浮动）+ 缓缓游动 + 偶尔吐泡泡 ----
+  // ---- 鲸鱼娘：活的容器层（游动/眨眼/睡觉/吐泡泡/皮肤切换；字段与 updateWhale 一致） ----
   private buildWhale(): void {
-    const cx = 330;
-    const cy = 320;
     const displayH = 152;
-    const scale = displayH / Math.max(1, 320);
+    const bowl = this.skin === SKIN_BOWL;
+    // v0.16.0 饭盆头 = 完整立绘 player_bowlhead（自带铁盆，不再叠小盆 overlay）；
+    // 与战斗内同款贴图/同锚点/同显示高，两皮肤内外对齐。
+    const bodyKey = bowl ? 'player_bowlhead' : 'player_whale';
+    const bodyScale = displayH / Math.max(1, 320);
 
-    const whale = this.add.image(cx, cy, 'player_whale');
-    whale.setScale(scale);
-    whale.setRotation(0.06);
-    whale.setDepth(3);
+    const c = this.add.container(330, 320).setDepth(3);
+    const body = this.add.image(0, 0, bodyKey).setScale(bodyScale);
+    c.add(body);
+
+    // 表情叠加层（按皮肤锚点：饭盆头脸小 → 表情等比缩小）
+    const off = bowl ? bowlheadFaceOffset(displayH) : faceScreenOffset(displayH);
+    const fxK = bowl ? bowlheadFxScale(displayH) : 0.5;
+    const fx = this.add.image(off.cx, off.cy, 'fx_idle').setScale(fxK).setDepth(0.5);
+    c.add(fx);
+    this.whaleFx = fx;
 
     // v0.14.0 承诺过的长按入口：长按鲸鱼娘切换皮肤（女仆装<->饭盆头），
     // 松开/移出取消；与皮肤按钮等效，兑现「长按或按钮切换」承诺。
-    whale.setInteractive();
+    c.setSize(140, 140);
+    // 输入命中区按 Phaser 归一化约定用 (0,0,w,h)：setSize 使容器 displayOriginX/Y=70，
+    // pointWithinHitArea 会再加 70 → 实际局部命中区落在 [-70,70] 居中于鲸鱼原点。
+    // 修复前用 (-70,-70,140,140)，有效命中区整体左上偏 70px，视觉中心恰在矩形右上角边界，
+    // 随游动小数抖动命中/落空翻转——真实产品 bug（点鲸鱼常落空），本次一并修复。
+    c.setInteractive(new Phaser.Geom.Rectangle(0, 0, 140, 140), Phaser.Geom.Rectangle.Contains);
     let holdTimer: Phaser.Time.TimerEvent | null = null;
-    whale.on('pointerdown', () => {
+    c.on('pointerdown', () => {
       holdTimer = this.time.delayedCall(650, () => this.handleSkinClick());
     });
-    whale.on('pointerup', () => { holdTimer?.remove(); holdTimer = null; });
-    whale.on('pointerout', () => { holdTimer?.remove(); holdTimer = null; });
+    c.on('pointerup', () => { holdTimer?.remove(); holdTimer = null; });
+    c.on('pointerout', () => { holdTimer?.remove(); holdTimer = null; });
 
-    // 闭眼表情（保持贴脸）
-    const off = faceScreenOffset(displayH);
-    const fx = this.add.image(cx + off.cx, cy + off.cy, 'fx_blink');
-    fx.setScale(0.5, 0.5);
-    fx.setDepth(3.5);
-
-    // v0.15.0 饭盆头皮肤：头顶叠加饭盆
-    let bowl: Phaser.GameObjects.Image | null = null;
-    if (this.skin === SKIN_BOWL) {
-      const bowlH = 54 * (displayH / 112);
-      const bowlOff = 50 * (displayH / 112);
-      bowl = this.add.image(cx, cy - bowlOff, 'rice_bowl');
-      bowl.setScale(bowlH / Math.max(1, 96));
-      bowl.setDepth(4);
-    }
-
-    // 呼吸浮动（身体+表情+饭盆同步贴脸）
-    this.tweens.add({ targets: whale, y: cy + 5, duration: 2100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    this.tweens.add({ targets: fx, y: cy + off.cy - 3, duration: 2100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    if (bowl) this.tweens.add({ targets: bowl, y: cy - 50 * (displayH / 112) + 5, duration: 2100, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    // 缓缓游动（水平漂移，慢且轻）
-    this.tweens.add({ targets: whale, x: cx - 36, duration: 6000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    this.tweens.add({ targets: fx, x: cx + off.cx - 36, duration: 6000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-    if (bowl) this.tweens.add({ targets: bowl, x: cx - 36, duration: 6000, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
-
-    // Zzz 三档气泡（错峰循环上飘）
+    // Zzz 三档（错峰循环动画常驻，updateWhale 按睡觉状态显隐）
     for (let i = 0; i < 3; i++) {
-      const z = this.add.text(cx + 46 + i * 13, cy - 30 - i * 22, i === 2 ? 'Z' : 'z', {
+      const baseY = -30 - i * 22;
+      const z = this.add.text(46 + i * 13, baseY, i === 2 ? 'Z' : 'z', {
         fontFamily: 'monospace', fontSize: i === 2 ? '24px' : '16px', color: '#9fd8ff'
-      }).setDepth(3).setAlpha(0);
-      const baseY = cy - 30 - i * 22;
+      }).setAlpha(0).setDepth(0.6);
       this.tweens.add({
         targets: z, y: baseY - 84, alpha: 1,
         delay: i * 1100, duration: 2400, repeat: -1, repeatDelay: 900,
         ease: 'Sine.easeOut',
         onRepeat: () => { z.setAlpha(0); z.y = baseY; }
       });
+      c.add(z);
+      this.zzz.push(z);
     }
+    for (const z of this.zzz) z.setVisible(false);
 
-    // 偶尔吐泡泡（从嘴部冒 1 颗，间隔错开）
-    this.time.addEvent({
+    // 偶尔吐泡泡（从嘴部冒 1 颗，间隔错开；嘴部锚点按皮肤）
+    const s = displayH / 320;
+    const mouth = bowl
+      ? { x: (BOWLHEAD.mouth.x - BOWLHEAD.imgW / 2) * s, y: (BOWLHEAD.mouth.y - BOWLHEAD.imgH / 2) * s }
+      : { x: (FACE.mouth.x - FACE.imgW / 2) * s, y: (FACE.mouth.y - FACE.imgH / 2) * s };
+    this.whaleSpitTimer = this.time.addEvent({
       delay: 2600, loop: true,
       callback: () => {
-        const bx = cx - 36 + Math.sin(this.seaT * 0.4) * 26 + 8;
-        const by = cy + 26;
-        const b = this.add.circle(bx, by, 3.5, 0xd8f2ff, 0.7).setDepth(3);
+        if (!this.whaleC) return;
+        const mx = this.whaleC.x + mouth.x * this.whaleC.scaleX;
+        const my = this.whaleC.y + mouth.y * this.whaleC.scaleY;
+        const b = this.add.circle(mx, my, 3.5, 0xd8f2ff, 0.7).setDepth(3);
         this.tweens.add({
-          targets: b, x: bx + 14, y: by - 70, alpha: 0,
+          targets: b, x: mx + 14, y: my - 70, alpha: 0,
           duration: 1900, ease: 'Sine.easeOut',
           onComplete: () => b.destroy()
         });
       }
     });
+
+    this.whaleC = c;
+  }
+
+  // ---- 金鱼巡游（4 条往返 + 摆尾 + 起伏；贴图由 BootScene 预生成） ----
+  private buildFish(): void {
+    const specs = [
+      { tex: 'goldfish_pink', x0: 90,  x1: 440,  y: 200, spd: 0.30, ph: 0,   amp: 7,  wiggle: 1.0, scale: 1.7 },
+      { tex: 'goldfish_gold', x0: 780, x1: 1160, y: 338, spd: 0.26, ph: 1.3, amp: 9,  wiggle: 0.9, scale: 2.0 },
+      { tex: 'goldfish_pink', x0: 170, x1: 560,  y: 528, spd: 0.24, ph: 2.1, amp: 6,  wiggle: 1.1, scale: 1.8 },
+      { tex: 'goldfish_gold', x0: 520, x1: 1110, y: 610, spd: 0.31, ph: 0.7, amp: 8,  wiggle: 0.8, scale: 2.1 },
+    ];
+    for (const s of specs) {
+      const img = this.add.image(s.x0, s.y, s.tex).setScale(s.scale).setDepth(2.7);
+      this.fish.push({ img, x0: s.x0, x1: s.x1, y: s.y, spd: s.spd, ph: s.ph, amp: s.amp, wiggle: s.wiggle });
+    }
+  }
+
+  // ---- 玻璃高光流动（前玻璃上的柔光条缓慢漂移，克制 3 条） ----
+  private buildGlassHighlights(): void {
+    if (!this.textures.exists('glass_streak')) {
+      const c = document.createElement('canvas');
+      c.width = 420; c.height = 60;
+      const ctx = c.getContext('2d')!;
+      // 水平柔光：中间亮、两端淡出
+      const hg = ctx.createLinearGradient(0, 30, 420, 30);
+      hg.addColorStop(0, 'rgba(255,255,255,0)');
+      hg.addColorStop(0.5, 'rgba(159,232,255,0.28)');
+      hg.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = hg;
+      ctx.fillRect(0, 0, 420, 60);
+      // 纵向柔化：上下淡出
+      const vg = ctx.createLinearGradient(0, 0, 0, 60);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(0.5, 'rgba(0,0,0,1)');
+      vg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalCompositeOperation = 'destination-in';
+      ctx.fillStyle = vg;
+      ctx.fillRect(0, 0, 420, 60);
+      this.textures.addCanvas('glass_streak', c);
+    }
+    const lanes = [
+      { y: 180, x0: -240, x1: 1480, dur: 9000,  alpha: 0.5,  angle: -0.06, delay: 0 },
+      { y: 470, x0: -200, x1: 1500, dur: 11500, alpha: 0.42, angle: 0.05,  delay: 3000 },
+      { y: 640, x0: -180, x1: 1520, dur: 10200, alpha: 0.34, angle: -0.03, delay: 6000 },
+    ];
+    for (const l of lanes) {
+      const img = this.add.image(l.x0, l.y, 'glass_streak').setAlpha(0).setDepth(1.8).setRotation(l.angle);
+      this.streaks.push(img);
+      this.tweens.add({
+        targets: img, x: l.x1, alpha: l.alpha,
+        duration: l.dur, delay: l.delay, repeat: -1,
+        ease: 'Sine.easeInOut',
+        onRepeat: () => { img.x = l.x0; img.setAlpha(0); }
+      });
+    }
   }
 
   // ============ 功能入口 ============

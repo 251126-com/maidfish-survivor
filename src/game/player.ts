@@ -14,7 +14,7 @@ import { applyBowlPickup, absorbDamage, type ArmorState } from './armor.ts';
 import { healClamp } from './collectibles.ts';
 import {
   faceScreenOffset, pickExpression, blinkState, gunPose, gunRecoilOffset,
-  GUN_ANCHOR, type ExpressionState
+  GUN_ANCHOR, bowlheadFaceOffset, bowlheadGunOffset, bowlheadFxScale, type ExpressionState
 } from './playerFx.ts';
 import { DEFAULT_SKIN, SKIN_BOWL, SKIN_MAID, type SkinId } from '../config/characters.ts';
 
@@ -56,7 +56,10 @@ export class Player {
   private fx!: Phaser.GameObjects.Image;
   private gun!: Phaser.GameObjects.Image;
   private fxState: ExpressionState = 'idle';
-  private readonly fxOff = faceScreenOffset(DISPLAY_H);
+  /** v0.16.0 按皮肤锚点：饭盆头完整立绘(145x320) vs 女仆装(308x320) */
+  private fxOff: { cx: number; cy: number };
+  private gunOff: { hx: number; hy: number };
+  private fxK: number;
   private aimTarget: { x: number; y: number } | null = null;
   private firingTimer = 0;
   private alertFlag = false;
@@ -69,17 +72,22 @@ export class Player {
     this.stats = stats;
     this.skin = skin === SKIN_MAID ? SKIN_MAID : SKIN_BOWL;
     this.armor = { armor: STARTER_ARMOR, max: ARMOR_MAX };  // v0.10.0 开局自带护盾
-    this.sprite = scene.add.image(this.x, this.y, 'player_whale');
+    const bowlTex = this.skin === SKIN_BOWL;   // v0.16.0 饭盆头完整立绘接入
+    this.sprite = scene.add.image(this.x, this.y, bowlTex ? 'player_bowlhead' : 'player_whale');
     this.baseScale = DISPLAY_H / Math.max(1, this.sprite.height);
     this.sprite.setScale(this.baseScale);
     this.sprite.setDepth(20);
+    this.fxOff = bowlTex ? bowlheadFaceOffset(DISPLAY_H) : faceScreenOffset(DISPLAY_H);
+    this.gunOff = bowlTex ? bowlheadGunOffset(DISPLAY_H) : this.handOffset();
+    this.fxK = bowlTex ? bowlheadFxScale(DISPLAY_H) : 0.5;
 
     // 程序化饭盆：独立 sprite，由 update() 每帧跟随角色变换
     this.bowlSpr = scene.add.image(this.x, this.y - BOWL_HEAD_OFFSET, 'rice_bowl');
     this.bowlScale = BOWL_DISPLAY_H / Math.max(1, this.bowlSpr.height);
     this.bowlSpr.setScale(this.bowlScale * this.baseScale);
     this.bowlSpr.setDepth(21);
-    this.bowlSpr.setVisible(this.skin === SKIN_BOWL);   // v0.14.0 饭盆头皮肤常显；女仆装隐藏
+    // v0.16.0 饭盆头完整立绘自带铁盆，不再叠加 overlay（饭盆=皮肤外观；女仆装永不叠加）
+    this.bowlSpr.setVisible(false);
 
     // 表情叠加层：锚定脸部中心（素材像素分析锚点），深度高于身体、低于饭盆
     this.fx = scene.add.image(this.x + this.fxOff.cx, this.y + this.fxOff.cy, 'fx_idle');
@@ -159,9 +167,9 @@ export class Player {
       }
     }
 
-    // —— 饭盆 overlay 跟随角色翻面/动作 ——
-    // v0.14.0 皮肤规则：饭盆头=常显；女仆装=永不显示（护甲数值照常生效，见 HUD 护甲条）
-    this.bowlSpr.setVisible(this.skin === SKIN_BOWL);
+    // —— 饭盆 overlay 保留实体但永 不显示 ——
+    // v0.16.0 皮肤规则：饭盆头=完整立绘自带铁盆、女仆装无盆；程序化 overlay 永 不显示，护甲数值照常生效（见 HUD 护甲条）
+    this.bowlSpr.setVisible(false);
     if (this.bowlSpr.visible) {
       const sx = this.sprite.scaleX;
       const sy = this.sprite.scaleY;
@@ -193,12 +201,12 @@ export class Player {
     const kx = this.sprite.scaleX / this.baseScale;
     const ky = this.sprite.scaleY / this.baseScale;
     this.fx.setPosition(this.sprite.x + this.fxOff.cx * kx, this.sprite.y + this.fxOff.cy * ky);
-    this.fx.setScale(0.5 * kx, 0.5 * ky);
+    this.fx.setScale(this.fxK * kx, this.fxK * ky);
     this.fx.setFlipX(this.facing < 0);
     this.fx.setAlpha(this.sprite.alpha);
 
     // —— 持枪：瞄准最近敌人 / 翻转 / 后坐 ——
-    const ho = this.handOffset();
+    const ho = this.gunOff;
     const hx = this.sprite.x + ho.hx * (this.facing < 0 ? -1 : 1);
     const hy = this.sprite.y + ho.hy;
     let aimAngle = 0;
@@ -285,8 +293,7 @@ export class Player {
   // 拾取饭盆：'new' 首次获得 / 'refill' 刷新回满 / 'full' 已满无变化（不叠加超上限）
   gainArmor(): 'new' | 'refill' | 'full' {
     const st = applyBowlPickup(this.armor, ARMOR_MAX);
-    // v0.14.0 皮肤规则：女仆装下碗永不显示（护甲数值照常生效）
-    if (st !== 'full' && this.skin === SKIN_BOWL) this.bowlSpr.setVisible(true);
+    // v0.16.0 饭盆头=完整立绘，程序化 overlay 永不显示（护甲数值照常生效）
     this.bowlSpr.clearTint();
     return st;
   }
@@ -301,12 +308,10 @@ export class Player {
   // 破甲：饭盆 overlay 消失 + 白色碎片粒子（女仆装皮肤下碗本就不显示；
   // 饭盆头皮肤是常显外观，破甲只播碎片反馈，碗不消失）
   private breakBowl(): void {
-    if (this.skin === SKIN_MAID || !this.bowlSpr.visible) return;
-    if (this.armor.armor <= 0 && this.skin === SKIN_BOWL) return;   // 饭盆头：碗=皮肤外观，不因破甲消失
-    const bx = this.bowlSpr.x;
-    const by = this.bowlSpr.y;
-    this.bowlSpr.setVisible(false);
-    this.bowlSpr.clearTint();
+    if (this.skin !== SKIN_BOWL) return;
+    if (this.armor.armor <= 0) return;   // 破甲时碗虽不消失（皮肤外观），仍播碎片反馈
+    const bx = this.sprite.x;
+    const by = this.sprite.y - BOWL_HEAD_OFFSET * (this.sprite.scaleY / this.baseScale);
     for (let i = 0; i < 8; i++) {
       const p = this.scene.add.rectangle(bx, by, 5, 5, 0xf4f0e4);
       p.setDepth(22);
@@ -325,10 +330,18 @@ export class Player {
     }
   }
 
-  /** v0.14.0 实时切换皮肤（战斗内悬浮菜单调用）：立即生效，纯外观 */
+  /** v0.14.0 实时切换皮肤（战斗内悬浮菜单调用）：立即生效，纯外观。
+ *  v0.16.0 饭盆头换完整立绘底图 + 锚点（脸部/枪/表情缩放）同步切换。 */
   setSkin(skin: SkinId): void {
-    this.skin = skin === SKIN_MAID ? SKIN_MAID : SKIN_BOWL;
-    this.bowlSpr.setVisible(this.skin === SKIN_BOWL);
+    const ns = skin === SKIN_MAID ? SKIN_MAID : SKIN_BOWL;
+    if (ns === this.skin) return;
+    this.skin = ns;
+    const bowl = ns === SKIN_BOWL;
+    this.sprite.setTexture(bowl ? 'player_bowlhead' : 'player_whale');
+    this.fxOff = bowl ? bowlheadFaceOffset(DISPLAY_H) : faceScreenOffset(DISPLAY_H);
+    this.gunOff = bowl ? bowlheadGunOffset(DISPLAY_H) : this.handOffset();
+    this.fxK = bowl ? bowlheadFxScale(DISPLAY_H) : 0.5;
+    this.bowlSpr.setVisible(false);
   }
   get skinId(): SkinId { return this.skin; }
 

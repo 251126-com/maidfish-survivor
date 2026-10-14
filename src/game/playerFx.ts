@@ -112,3 +112,58 @@ export function gunRecoilOffset(aimAngleRad: number, amount: number, facing: 1 |
     ry: -Math.sin(aimAngleRad) * amount * dir
   };
 }
+
+// ===================== v0.16.0 饭盆头完整皮肤锚点 =====================
+// bowlhead_maidfish_game320.png（145x320，饭盆头完整立绘：头上铁盆+粉色领结+蓝裙）。
+// 由像素分析得出脸部区域位于顶部砖下（左眼/右眼/嘴聚类），右手侧约在肩部高度。
+// 女仆装仍使用上方 FACE / GUN_ANCHOR。
+export const BOWLHEAD = {
+  imgW: 145,
+  imgH: 320,
+  face: { x: 69, y: 36 },
+  eyeL: { x: 66, y: 35 },
+  eyeR: { x: 73, y: 35 },
+  mouth: { x: 70, y: 40 },
+  // 右手侧握枪点（肩部高度右沿）：完整立绘右手在 x≈120, y≈120
+  gun: { x: 120, y: 120 }
+} as const;
+
+/** 饭盆头脸部中心相对贴图中心（origin 0.5,0.5）的显示偏移（px） */
+export function bowlheadFaceOffset(displayH: number): { cx: number; cy: number } {
+  const s = displayH / BOWLHEAD.imgH;
+  return {
+    cx: (BOWLHEAD.face.x - BOWLHEAD.imgW / 2) * s,
+    cy: (BOWLHEAD.face.y - BOWLHEAD.imgH / 2) * s
+  };
+}
+
+/** 饭盆头握枪点相对贴图中心（origin 0.5,0.5）的显示偏移（px） */
+export function bowlheadGunOffset(displayH: number): { hx: number; hy: number } {
+  const s = displayH / BOWLHEAD.imgH;
+  return {
+    hx: (BOWLHEAD.gun.x - BOWLHEAD.imgW / 2) * s,
+    hy: (BOWLHEAD.gun.y - BOWLHEAD.imgH / 2) * s
+  };
+}
+
+/**
+ * 饭盆头表情叠加层显示缩放：表情贴图按女仆装脸宽绘制（2x 贴图 0.5 显示），
+ * 饭盆头脸更小（眼距 ~7px vs 女仆 ~32px），等比缩放到小脸匹配。
+ */
+export function bowlheadFxScale(displayH: number): number {
+  const maidEyeGapDisp = (FACE.eyeR.x - FACE.eyeL.x) * (displayH / FACE.imgH);
+  const bowlEyeGapDisp = (BOWLHEAD.eyeR.x - BOWLHEAD.eyeL.x) * (displayH / BOWLHEAD.imgH);
+  return Math.max(0.05, 0.5 * bowlEyeGapDisp / maidEyeGapDisp);
+}
+
+/** 饭盆头立绘脚底相对贴图中心的水平偏移（px，按 displayH 缩放），用于与女仆装脚底对齐。
+ *  女仆装脚底锚点 x≈135（308 宽）、饭盆头脚底锚点 x≈112（145 宽），
+ *  两者均以 origin(0.5,0.5) 贴到同一容器点时脚底会错位 ~58px*scale，
+ *  返回饭盆头 sprite 应额外平移的 x（负=向左），使两套皮肤的脚底落在同一水平线。
+ */
+export function bowlheadFootAlignX(displayH: number): number {
+  const s = displayH / BOWLHEAD.imgH;
+  const maidFootRel = (135 - 308 / 2) / 308;      // 女仆装脚底相对贴图中心（归一化）
+  const bowlFootRel = (112 - BOWLHEAD.imgW / 2) / BOWLHEAD.imgW;  // 饭盆头脚底相对贴图中心
+  return (maidFootRel - bowlFootRel) * BOWLHEAD.imgW * s;
+}

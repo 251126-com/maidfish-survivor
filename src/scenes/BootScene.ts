@@ -17,6 +17,12 @@ export class BootScene extends Phaser.Scene {
     });
     // 正式角色素材：用户设计图抠出的透明 PNG（保留白色头饰/围裙）
     this.load.image('player_whale', 'assets/player_whale.png');
+    // v0.16.0 饭盆头完整立绘（bowlhead_maidfish_game320.png 授权抠图，自带铁盆+粉领结）
+    this.load.image('player_bowlhead', 'assets/player_bowlhead.png');
+    // v0.16.0 大厅粉蓝玻璃缸背景（选定概念图 3840x2160 处理为 1280x720 JPEG）
+    this.load.image('lobby_bg', 'assets/lobby_bg.jpg');
+    // v0.16.0 完整饭盆头皮肤立绘（抠图 145x320 透明 PNG，脚底与女仆装对齐）
+    this.load.image('bowlhead_maid', 'assets/bowlhead_maid.png');
     // v0.11.0 素材接线：大白饭/铁盆拾取图标 + 角色饭盆头 overlay 全部改用授权 PNG，
     // 不再走程序化占位（makeDrops/makeLoot 仅保留经验球/金币程序化生成）。
     this.load.image('loot_rice', 'assets/loot_rice.png');
@@ -38,6 +44,7 @@ export class BootScene extends Phaser.Scene {
     this.makeProjectiles();
     this.makeDrops();
     this.makePlayerFx();
+    this.makeGoldfish();
     this.scene.start('Menu');
   }
 
@@ -107,6 +114,42 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0xfffbe0, 1);
     g.fillCircle(9, -6, 1.6);
     g.generateTexture(key, 42, 26);
+    g.destroy();
+  }
+
+  // v0.16.0 大厅金鱼（面朝右，粉蓝治愈色系两枚）：尾鳍 + 椭圆身体 + 高光 + 腮红
+  // 一枚粉金（治愈粉）+ 一枚暖金（金币色），供大厅 4 条金鱼循环游动使用（1 纹理多实例）。
+  private makeGoldfish(): void {
+    this.makeGold('goldfish_pink', 30, 20, 0xff9ad5, 0xffd0e8, 0xffe9f2);
+    this.makeGold('goldfish_gold', 30, 20, 0xffc46a, 0xffe2b0, 0xfff6d8);
+  }
+  private makeGold(key: string, w: number, h: number, body: number, fin: number, belly: number): void {
+    const g = this.add.graphics();
+    // 尾鳍（分叉）
+    g.fillStyle(fin, 1);
+    g.fillTriangle(2, h * 0.28, 10, h * 0.08, 10, h * 0.5);
+    g.fillTriangle(2, h * 0.72, 10, h * 0.5, 10, h * 0.92);
+    // 背鳍
+    g.fillStyle(fin, 1);
+    g.fillTriangle(w * 0.5, h * 0.1, w * 0.62, h * 0.0, w * 0.68, h * 0.2);
+    // 身体（椭圆）
+    g.fillStyle(body, 1);
+    g.fillEllipse(w * 0.58, h * 0.5, w * 0.58, h * 0.5);
+    // 肚皮
+    g.fillStyle(belly, 0.9);
+    g.fillEllipse(w * 0.6, h * 0.6, w * 0.4, h * 0.3);
+    // 眼
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(w * 0.8, h * 0.4, h * 0.16);
+    g.fillStyle(0x101c2c, 1);
+    g.fillCircle(w * 0.82, h * 0.42, h * 0.09);
+    // 腮红
+    g.fillStyle(0xff7a9e, 0.55);
+    g.fillCircle(w * 0.66, h * 0.66, h * 0.12);
+    // 高光
+    g.fillStyle(0xffffff, 0.5);
+    g.fillCircle(w * 0.55, h * 0.36, h * 0.14);
+    g.generateTexture(key, w, h);
     g.destroy();
   }
 

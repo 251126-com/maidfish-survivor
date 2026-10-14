@@ -1072,6 +1072,9 @@ export class GameScene extends Phaser.Scene {
   // v0.13.0 开局漫画感引导（轻量）：2-3 帧半透明底+大字，交代深海世界观，点击跳过。
   // 引导期间游戏冻结（update 提前 return，波次计时/升级/刷怪都不走）。
   private showGuide(): void {
+    // v0.16.0 防御：若本实例存在残留引导（重复进入/异常时序），先完整清理，
+    // 再重建——确保 paintGuideFrame 只在有效 Text 上 setText（glTexture 崩溃修复）。
+    if (this.guideActive) this.dismissGuide();
     const frameData: Array<{ title: string; body: string }> = [
       {
         title: '深海咖啡馆 · 鲸鱼娘',
@@ -1116,6 +1119,7 @@ export class GameScene extends Phaser.Scene {
     this.paintGuideFrame();
     // 点击任意处：下一页 → 最后一帧再点开始游戏；同时解锁音频（用户手势）
     this.guideClickHandler = () => {
+      if (!this.guideActive) return;   // v0.16.0 防御：已关闭/已销毁则不再触碰 Text
       sfx.unlock();
       if (this.guideIdx < this.guideFrames.length / 2 - 1) {
         this.guideIdx++;
@@ -1124,6 +1128,8 @@ export class GameScene extends Phaser.Scene {
         this.dismissGuide();
       }
     };
+    // v0.16.0 防重复注册：若残留 handler 先解除，保证只有一个入口驱动引导
+    this.input.off('pointerdown', this.guideClickHandler);
     this.input.on('pointerdown', this.guideClickHandler);
     // 兜底：7s 后自动关闭，避免玩家误以为卡死
     this.time.delayedCall(7000, () => this.dismissGuide());
@@ -1132,11 +1138,18 @@ export class GameScene extends Phaser.Scene {
   private paintGuideFrame(): void {
     const n = this.guideFrames.length / 2;
     for (let i = 0; i < n; i++) {
-      this.guideFrames[i * 2].setVisible(i === this.guideIdx);
-      this.guideFrames[i * 2 + 1].setVisible(i === this.guideIdx);
-      this.guideDots[i]?.setText(i === this.guideIdx ? '●' : '○');
+      const t = this.guideFrames[i * 2];
+      const b = this.guideFrames[i * 2 + 1];
+      // v0.16.0 防御：对象已销毁/失效（active=false）则跳过，避免在无效纹理上 setText 抛错
+      if (!t || !b || !t.active || !b.active) continue;
+      t.setVisible(i === this.guideIdx);
+      b.setVisible(i === this.guideIdx);
+      const d = this.guideDots[i];
+      if (d && d.active) d.setText(i === this.guideIdx ? '●' : '○');
     }
-    this.guideSkipText?.setText(this.guideIdx < n - 1 ? '点击 下一页 ▸' : '点击 开始游戏 ▸');
+    if (this.guideSkipText && this.guideSkipText.active) {
+      this.guideSkipText.setText(this.guideIdx < n - 1 ? '点击 下一页 ▸' : '点击 开始游戏 ▸');
+    }
   }
 
   private dismissGuide(): void {
