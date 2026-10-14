@@ -25,7 +25,7 @@ export const CHARACTERS: Record<string, CharacterDef> = {
   whale: {
     id: 'whale',
     name: '鲸鱼娘',
-    desc: '深海咖啡馆的招牌店长，均衡全能',
+    desc: '深海鲸语的招牌店长，均衡全能',
     weaponId: 'rifle',
     unlockCost: 0,
     mods: { hp: 0, speedMult: 1, pickup: 0, critChance: 0 },
@@ -52,7 +52,7 @@ export interface SkinDef {
 }
 
 export const SKINS: Record<SkinId, SkinDef> = {
-  [SKIN_MAID]: { id: SKIN_MAID, name: '女仆装', desc: '正常卖萌形态 · 深海咖啡馆招牌店长' },
+  [SKIN_MAID]: { id: SKIN_MAID, name: '女仆装', desc: '正常卖萌形态 · 深海鲸语招牌店长' },
   [SKIN_BOWL]: { id: SKIN_BOWL, name: '饭盆头', desc: '头上扣铁饭盆 · 深海干饭魂（搞笑形态）' }
 };
 

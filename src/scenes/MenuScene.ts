@@ -66,7 +66,7 @@ export class MenuScene extends Phaser.Scene {
     this.buildGlassHighlights();
 
     // ============ 顶部信息（融于水面的蓝白文字） ============
-    this.add.text(GAME_W / 2, 54, '鲸鱼娘 · 割草求生', {
+    this.add.text(GAME_W / 2, 54, '深海鲸语', {
       fontFamily: 'monospace', fontSize: '46px', color: '#9fe0ff',
       stroke: '#04304f', strokeThickness: 7
     }).setOrigin(0.5).setDepth(4).setShadow(0, 0, '#3f9fe8', 4, true, true);

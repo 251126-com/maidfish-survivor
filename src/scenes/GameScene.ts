@@ -1077,8 +1077,8 @@ export class GameScene extends Phaser.Scene {
     if (this.guideActive) this.dismissGuide();
     const frameData: Array<{ title: string; body: string }> = [
       {
-        title: '深海咖啡馆 · 鲸鱼娘',
-        body: '你是一只深海鲸鱼娘，\n守护着海底咖啡厅的和平'
+        title: '深海鲸语',
+        body: '你是一只深海鲸鱼娘，\n守护着深海鲸语的和平'
       },
       {
         title: '大白饭碗 · 铁盆',
