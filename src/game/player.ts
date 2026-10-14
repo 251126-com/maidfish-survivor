@@ -16,6 +16,7 @@ import {
   faceScreenOffset, pickExpression, blinkState, gunPose, gunRecoilOffset,
   GUN_ANCHOR, type ExpressionState
 } from './playerFx.ts';
+import { DEFAULT_SKIN, SKIN_BOWL, SKIN_MAID, type SkinId } from '../config/characters.ts';
 
 // 角色在屏幕上显示的高度（px）。素材原图 320 高，等比缩放。
 const DISPLAY_H = 112;
@@ -30,6 +31,8 @@ export class Player {
   readonly armor: ArmorState;
   /** 程序化饭盆 overlay：有护甲时显示在头顶，跟随角色翻面/动作 */
   readonly bowlSpr: Phaser.GameObjects.Image;
+  /** v0.14.0 皮肤：饭盆头（碗常显）/ 女仆装（碗隐藏）。纯外观，不影响数值 */
+  private skin: SkinId;
 
   x = WORLD_W / 2;
   y = WORLD_H / 2;
@@ -60,12 +63,11 @@ export class Player {
   private winFlag = false;
   private loseFlag = false;
   private gunRecoil = 0;      // 开火后坐（px，指数衰减）
-  // v0.13.0 连杀热度（0..n）：枪口火焰随连杀变红
-  private streak = 0;
 
-  constructor(scene: Phaser.Scene, stats: PlayerStats) {
+  constructor(scene: Phaser.Scene, stats: PlayerStats, skin: SkinId = DEFAULT_SKIN) {
     this.scene = scene;
     this.stats = stats;
+    this.skin = skin === SKIN_MAID ? SKIN_MAID : SKIN_BOWL;
     this.armor = { armor: STARTER_ARMOR, max: ARMOR_MAX };  // v0.10.0 开局自带护盾
     this.sprite = scene.add.image(this.x, this.y, 'player_whale');
     this.baseScale = DISPLAY_H / Math.max(1, this.sprite.height);
@@ -77,7 +79,7 @@ export class Player {
     this.bowlScale = BOWL_DISPLAY_H / Math.max(1, this.bowlSpr.height);
     this.bowlSpr.setScale(this.bowlScale * this.baseScale);
     this.bowlSpr.setDepth(21);
-    this.bowlSpr.setVisible(STARTER_ARMOR > 0);   // 开局护盾也显示饭盆头
+    this.bowlSpr.setVisible(this.skin === SKIN_BOWL);   // v0.14.0 饭盆头皮肤常显；女仆装隐藏
 
     // 表情叠加层：锚定脸部中心（素材像素分析锚点），深度高于身体、低于饭盆
     this.fx = scene.add.image(this.x + this.fxOff.cx, this.y + this.fxOff.cy, 'fx_idle');
@@ -158,6 +160,8 @@ export class Player {
     }
 
     // —— 饭盆 overlay 跟随角色翻面/动作 ——
+    // v0.14.0 皮肤规则：饭盆头=常显；女仆装=永不显示（护甲数值照常生效，见 HUD 护甲条）
+    this.bowlSpr.setVisible(this.skin === SKIN_BOWL);
     if (this.bowlSpr.visible) {
       const sx = this.sprite.scaleX;
       const sy = this.sprite.scaleY;
@@ -218,24 +222,12 @@ export class Player {
     this.recoilX = this.facing * -4;
     this.gunRecoil = 5;
     this.firingTimer = 0.09;
-    // v0.13.0 连杀越高枪口火焰越红（tint 强度随 streak 映射）
-    this.applyStreakTint();
+    // v0.14.0 修正：枪口火焰随连杀变红已移除（Nathan 要求），枪保持原色
   }
 
-  /** v0.13.0 设置当前连杀数（GameScene 每次击杀后调用）；0 清零时清除枪口染色 */
-  setStreak(n: number): void {
-    this.streak = Math.max(0, Math.floor(n));
-    if (this.streak <= 0) this.gun.clearTint();
-  }
-
-  // 枪口火焰变红：白 → 红橙按热度(0..15 封顶)插值
-  private applyStreakTint(): void {
-    const heat = Math.min(1, this.streak / 15);
-    if (heat <= 0) { this.gun.clearTint(); return; }
-    const r = Math.round(255 - heat * 70);
-    const g = Math.round(255 - heat * 215);
-    const b = Math.round(255 - heat * 238);
-    this.gun.setTint((r << 16) | (g << 8) | b);
+  /** v0.14.0 连杀枪口染色已移除（Nathan 要求），仅保留清色兜底，兼容旧调用方 */
+  setStreak(_n: number): void {
+    this.gun.clearTint();
   }
 
   /** 瞄准目标（最近敌人）；由 GameScene 每帧设置，未设则枪朝正右 */
@@ -293,7 +285,8 @@ export class Player {
   // 拾取饭盆：'new' 首次获得 / 'refill' 刷新回满 / 'full' 已满无变化（不叠加超上限）
   gainArmor(): 'new' | 'refill' | 'full' {
     const st = applyBowlPickup(this.armor, ARMOR_MAX);
-    if (st !== 'full') this.bowlSpr.setVisible(true);
+    // v0.14.0 皮肤规则：女仆装下碗永不显示（护甲数值照常生效）
+    if (st !== 'full' && this.skin === SKIN_BOWL) this.bowlSpr.setVisible(true);
     this.bowlSpr.clearTint();
     return st;
   }
@@ -305,9 +298,11 @@ export class Player {
     return this.stats.hp - before;
   }
 
-  // 破甲：饭盆 overlay 消失 + 白色碎片粒子
+  // 破甲：饭盆 overlay 消失 + 白色碎片粒子（女仆装皮肤下碗本就不显示；
+  // 饭盆头皮肤是常显外观，破甲只播碎片反馈，碗不消失）
   private breakBowl(): void {
-    if (!this.bowlSpr.visible) return;
+    if (this.skin === SKIN_MAID || !this.bowlSpr.visible) return;
+    if (this.armor.armor <= 0 && this.skin === SKIN_BOWL) return;   // 饭盆头：碗=皮肤外观，不因破甲消失
     const bx = this.bowlSpr.x;
     const by = this.bowlSpr.y;
     this.bowlSpr.setVisible(false);
@@ -329,6 +324,13 @@ export class Player {
       });
     }
   }
+
+  /** v0.14.0 实时切换皮肤（战斗内悬浮菜单调用）：立即生效，纯外观 */
+  setSkin(skin: SkinId): void {
+    this.skin = skin === SKIN_MAID ? SKIN_MAID : SKIN_BOWL;
+    this.bowlSpr.setVisible(this.skin === SKIN_BOWL);
+  }
+  get skinId(): SkinId { return this.skin; }
 
   get alive(): boolean { return this.stats.hp > 0; }
   /** 有护甲 → 显示饭盆头外观 */

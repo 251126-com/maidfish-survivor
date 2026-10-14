@@ -8,6 +8,7 @@ import {
 import { currentPhase, pickEnemy, WAVE_EVENTS } from '../config/timeline.ts';
 import { BG_ORDER, randomStartIndex } from '../config/background.ts';
 import { BUFF_POOL, PASSIVES, type PlayerStats } from '../config/upgrades.ts';
+import { CHARACTERS, DEFAULT_CHAR, DEFAULT_SKIN, SKIN_BOWL, SKIN_MAID, isSkinId, type SkinId } from '../config/characters.ts';
 import { loadSave, writeSave, metaBonus } from '../core/save.ts';
 import { sfx } from '../core/audio.ts';
 import { vibrate } from '../core/vibration.ts';
@@ -55,6 +56,10 @@ export class GameScene extends Phaser.Scene {
   private bgLayer!: BackgroundLayer;
   /** 本局起始背景下标（菜单选关或随机） */
   private bgStartIndex = 0;
+  /** v0.14.0 本局角色（菜单/大厅选定） */
+  private charId = DEFAULT_CHAR;
+  /** v0.14.0 本局皮肤 */
+  private skin: SkinId = DEFAULT_SKIN;
   private bgToast: Phaser.GameObjects.Text | null = null;
 
   private stats!: PlayerStats;
@@ -112,12 +117,18 @@ export class GameScene extends Phaser.Scene {
 
   constructor() { super('Game'); }
 
-  init(data: { bgStart?: number }): void {
+  init(data: { bgStart?: number; charId?: string; skin?: string }): void {
     // 起始背景：菜单选关(bgStart)优先，否则正常玩法随机轮换
     let start = -1;
     if (data && typeof data.bgStart === 'number') start = data.bgStart;
     if (start < 0 || start >= BG_ORDER.length) start = randomStartIndex();
     this.bgStartIndex = start;
+    // v0.14.0 角色/皮肤：以存档为准（菜单传参仅作调试钩子，不覆盖存档校验）
+    const save = loadSave();
+    this.charId = (data && typeof data.charId === 'string' && CHARACTERS[data.charId]) ? data.charId : DEFAULT_CHAR;
+    this.skin = (data && isSkinId(data.skin)) ? data.skin : DEFAULT_SKIN;
+    if (save.charId && CHARACTERS[save.charId]) this.charId = save.charId;
+    if (isSkinId(save.skin)) this.skin = save.skin;   // v0.14.0 女仆装/饭盆头均合法，以存档为准
   }
 
   create(): void {
@@ -152,21 +163,23 @@ export class GameScene extends Phaser.Scene {
     border.lineStyle(6, 0x2a4a6b, 1);
     border.strokeRect(0, 0, WORLD_W, WORLD_H);
 
-    // 玩家属性 = 基础 + 永久强化
+    // v0.14.0 玩家属性 = 基础 × 角色修正 + 永久强化
     const save = loadSave();
     const bonus = metaBonus(save);
+    const ch = CHARACTERS[this.charId] ?? CHARACTERS[DEFAULT_CHAR];
+    const baseHp = Math.max(30, PLAYER_BASE.hp + ch.mods.hp);
     this.stats = {
-      maxHp: PLAYER_BASE.hp + bonus.maxHp,
-      hp: PLAYER_BASE.hp + bonus.maxHp,
-      speed: PLAYER_BASE.speed * bonus.speedMult,
-      pickup: PLAYER_BASE.pickup + bonus.pickup,
-      critChance: PLAYER_BASE.critChance + bonus.critChance,
+      maxHp: baseHp + bonus.maxHp,
+      hp: baseHp + bonus.maxHp,
+      speed: PLAYER_BASE.speed * ch.mods.speedMult * bonus.speedMult,
+      pickup: PLAYER_BASE.pickup + ch.mods.pickup + bonus.pickup,
+      critChance: PLAYER_BASE.critChance + ch.mods.critChance + bonus.critChance,
       critMult: PLAYER_BASE.critMult,
       damageMult: PLAYER_BASE.damageMult * bonus.damageMult,
       xpMult: PLAYER_BASE.xpMult * bonus.xpMult
     };
 
-    this.player = new Player(this, this.stats);
+    this.player = new Player(this, this.stats, this.skin);
     this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
     this.cameras.main.startFollow(this.player.sprite, true, 0.12, 0.12);
     this.cameras.main.setBackgroundColor('#0a1420');
@@ -183,7 +196,7 @@ export class GameScene extends Phaser.Scene {
     this.eliteG = this.add.graphics().setDepth(12);
 
     this.weapons = new WeaponSystem(this);
-    this.weapons.addWeapon('rifle');   // 默认武器
+    this.weapons.addWeapon(ch.weaponId);   // v0.14.0 角色初始武器
     // v0.10.0 命中特效：暴击火花（克制 3 粒）
     this.weapons.onHitFx = (e, crit) => {
       if (crit) this.deathFx?.spark(e.x, e.y, 3);
@@ -234,6 +247,17 @@ export class GameScene extends Phaser.Scene {
         // 悬浮面板暂停态换景：直接切，交叉淡入淡出 tween 照常播放
         this.bgLayer.next(this.elapsed);
         this.hud?.setBgName(this.bgLayer.activeName);
+      },
+      // v0.14.0 皮肤切换：战斗内实时生效（纯外观），切换即写档
+      toggleSkin: () => {
+        // v0.14.0 女仆装(默认)<->饭盆头(搞笑)显式互切，不依赖 DEFAULT_SKIN
+        const ns: SkinId = this.skin === SKIN_MAID ? SKIN_BOWL : SKIN_MAID;
+        this.skin = ns;
+        this.player?.setSkin(ns);
+        const sv = loadSave();
+        sv.skin = ns;
+        writeSave(sv);
+        this.showPickupFeedback(ns === SKIN_MAID ? '皮肤 → 女仆装' : '皮肤 → 饭盆头', 0x9fe8ff);
       }
     });
     this.hud.setBgName(this.bgLayer.activeName);
@@ -327,6 +351,7 @@ export class GameScene extends Phaser.Scene {
     // 背景：跨过切换点就交叉淡入淡出下一张授权背景
     this.bgLayer.update(this.elapsed);
     this.syncBgState();
+    this.syncCharState();
 
     this.inputSys.update();
     this.player.update(dt, this.inputSys.dirX, this.inputSys.dirY);
@@ -367,6 +392,19 @@ export class GameScene extends Phaser.Scene {
 
     this.updateHud(rawDt);
     this.checkEnd();
+  }
+
+  // v0.14.0 角色/皮肤部署标记：e2e/线上校验读取
+  private syncCharState(): void {
+    const w = window as unknown as { __CHAR_STATE?: { charId: string; weaponId: string; skin: string; maxHp: number; speed: number }; __CURR_SKIN?: string };
+    if (!w.__CHAR_STATE) return;
+    w.__CURR_SKIN = this.skin;   // 悬浮菜单皮肤行文案读这里
+    const ch = CHARACTERS[this.charId] ?? CHARACTERS[DEFAULT_CHAR];
+    w.__CHAR_STATE.charId = this.charId;
+    w.__CHAR_STATE.weaponId = ch.weaponId;
+    w.__CHAR_STATE.skin = this.skin;
+    w.__CHAR_STATE.maxHp = this.stats?.maxHp ?? 0;
+    w.__CHAR_STATE.speed = this.stats?.speed ?? 0;
   }
 
   // 同步全局可观测背景状态（e2e/线上校验用）
@@ -1020,14 +1058,13 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // v0.13.0 连杀视觉化：热度映射到枪口染色 + 屏幕边缘轻微泛红
+  // v0.14.0 连杀视觉化（修正后）：仅保留屏幕边缘轻微泛红（减弱版），枪口染色已移除
   private updateStreakVisual(streak: number): void {
     if (!this.streakEdge) return;
-    this.player.setStreak(streak);
     const heat = streakHeat(streak);
     if (heat > 0) {
-      // 复用 hurtFlash 机制（屏幕边缘红晕），强度随连杀映射，上限低不与受击红晕叠太厚
-      this.streakEdge.setAlpha(Math.min(0.18, 0.02 + heat * 0.11));
+      // 复用 hurtFlash 机制（屏幕边缘红晕），强度随连杀映射；v0.14.0 上限调低避免抢戏
+      this.streakEdge.setAlpha(Math.min(0.10, 0.015 + heat * 0.06));
       this.tweens.add({
         targets: this.streakEdge,
         alpha: 0,

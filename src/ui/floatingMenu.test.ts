@@ -36,10 +36,10 @@ test('保存位置越界时被拉回屏内', () => {
   assert.equal(p.y, BALL_RADIUS + 8);
 });
 
-test('面板布局：7 个按钮（含场景切换）在卡片内垂直排布不重叠', () => {
+test('面板布局：8 个按钮（含场景切换/皮肤切换）在卡片内垂直排布不重叠', () => {
   const L = computePanelLayout(GAME_W, GAME_H);
   const ids = L.items.map(i => i.id);
-  assert.deepEqual(ids, ['resume', 'bg', 'sound', 'vib', 'full', 'restart', 'menu']);
+  assert.deepEqual(ids, ['resume', 'bg', 'sound', 'vib', 'skin', 'full', 'restart', 'menu']);
   for (const it of L.items) {
     assert.ok(it.cy - 26 >= L.cy - L.cardH / 2, `${it.id} 顶部越界`);
     assert.ok(it.cy + 26 <= L.cy + L.cardH / 2, `${it.id} 底部越界`);
@@ -62,6 +62,18 @@ test('面板布局：标题在卡片内且不与 6 行按钮重叠', () => {
   assert.ok(L.titleY < L.items[0].cy - 52, '标题与首行按钮不重叠');
 });
 
+test('面板提供「皮肤切换」入口（skin 按钮）且紧随震动，便于战斗内换肤', () => {
+  const L = computePanelLayout(GAME_W, GAME_H);
+  const skin = L.items.find(i => i.id === 'skin');
+  assert.ok(skin, '面板必须提供皮肤切换入口');
+  assert.ok(/皮肤/.test(skin!.label), `skin 按钮文案应含"皮肤": ${skin!.label}`);
+  const ids = L.items.map(i => i.id);
+  const idx = ids.indexOf('skin');
+  assert.equal(idx, 4, '皮肤切换应位于震动与全屏之间');
+  assert.ok(L.items[idx].cy - L.items[idx - 1].cy >= 52, '与震动行间距不足');
+  assert.ok(L.items[idx + 1].cy - L.items[idx].cy >= 52, '与全屏行间距不足');
+});
+
 test('面板含 Fullscreen API 手势入口（full 按钮）', () => {
   const L = computePanelLayout(GAME_W, GAME_H);
   const full = L.items.find(i => i.id === 'full');
@@ -79,7 +91,7 @@ test('Fullscreen 手势改造是纯函数友好的：isBlocked 语义独立于 P
   // 设计契约：升级面板打开时悬浮球必须"可被禁用交互"（borrow 期/升级遮罩在上层）
   // 这里测纯逻辑部分：blocked 标记不应影响布局计算
   const L = computePanelLayout(GAME_W, GAME_H);
-  assert.equal(L.items.length, 7);
+  assert.equal(L.items.length, 8);
   // 与 blocked 无关：布局永远可用
   assert.ok(L.cardW > 0 && L.cardH > 0);
 });
@@ -103,5 +115,5 @@ test('面板含场景按钮时文案不与其他行重叠且行内垂直居中',
     assert.ok(Math.abs(it.cy - (it.cy)) < 1e-9);
   }
   const all = L.items.map(i => i.id);
-  assert.equal(new Set(all).size, 7, '行 id 唯一');
+  assert.equal(new Set(all).size, 8, '行 id 唯一');
 });

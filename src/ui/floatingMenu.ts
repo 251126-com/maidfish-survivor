@@ -15,6 +15,8 @@ export interface FloatingMenuOptions {
   toMenu: () => void;
   /** 场景切换：切到下一张授权背景（面板保持打开，可连续预览） */
   nextBg: () => void;
+  /** v0.14.0 皮肤切换：战斗内实时生效（纯外观），切换即写档 */
+  toggleSkin: () => void;
 }
 
 interface ItemView {
@@ -172,6 +174,11 @@ export class FloatingMenu {
         vibrate(12);
         this.refreshLabels();
         break;
+      case 'skin':
+        this.opts.toggleSkin();
+        vibrate(12);
+        this.refreshLabels();
+        break;
       case 'full':
         // 优先走 main.ts 注入的 __FS 统一入口（含 iOS 轻提示与 fullscreenchange 刷新）；
         // 旧浏览器无该钩子时退化走本面板自带逻辑
@@ -192,9 +199,13 @@ export class FloatingMenu {
     const s = this.items.find(i => i.id === 'sound');
     const v = this.items.find(i => i.id === 'vib');
     const f = this.items.find(i => i.id === 'full');
+    const k = this.items.find(i => i.id === 'skin');
     if (s) s.text.setText(sfx.enabled ? '♪ 音效：开' : '✕ 音效：关');
     if (v) v.text.setText(vibrateEnabled() ? '📳 震动：开' : '✕ 震动：关');
     if (f) f.text.setText(this.isFullscreen() ? '⛶ 退出全屏' : '⛶ 全屏');
+    // v0.14.0 皮肤行文案：由 GameScene 注入的当前皮肤（通过 toMenu 后的 scene 或直接读 __CURR_SKIN）
+    const currSkin = (window as unknown as { __CURR_SKIN?: string }).__CURR_SKIN;
+    if (k) k.text.setText(`👗 皮肤：${currSkin === 'maid' ? '女仆装' : '饭盆头'}`);
   }
 
   // Fullscreen API（含 webkit 前缀降级）：必须在用户手势内调用。

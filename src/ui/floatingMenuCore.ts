@@ -27,7 +27,7 @@ export function resolveBallStart(
   return clampBall(base.x, base.y, radius, gw, gh);
 }
 
-export type PanelAction = 'resume' | 'bg' | 'sound' | 'vib' | 'full' | 'restart' | 'menu';
+export type PanelAction = 'resume' | 'bg' | 'sound' | 'vib' | 'skin' | 'full' | 'restart' | 'menu';
 
 export interface PanelLayout {
   cardW: number;
@@ -45,13 +45,14 @@ const ROWS: { id: PanelAction; label: string }[] = [
   { id: 'bg', label: '🌌 场景切换' },
   { id: 'sound', label: '♪ 音效' },
   { id: 'vib', label: '📳 震动' },
+  { id: 'skin', label: '👗 皮肤：女仆装' },
   { id: 'full', label: '⛶ 全屏' },
   { id: 'restart', label: '↻ 重开本局' },
   { id: 'menu', label: '🏠 返回主菜单' }
 ];
 const PANEL_W = 380;
-// 7 行按钮：行长 56+8=64，7 行 = 440，加标题区 90 + 底部留白 30 = 560
-const PANEL_H = 560;
+// 8 行按钮：行长 56+8=64，8 行 = 504，加标题区 90 + 底部留白 30 = 624（1280x720 内可容）
+const PANEL_H = 624;
 export const ROW_H = 56;
 const ROW_GAP = 8;
 
