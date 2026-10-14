@@ -8,7 +8,7 @@ import {
 import { currentPhase, pickEnemy, WAVE_EVENTS } from '../config/timeline.ts';
 import { BG_ORDER, randomStartIndex } from '../config/background.ts';
 import { BUFF_POOL, PASSIVES, type PlayerStats } from '../config/upgrades.ts';
-import { CHARACTERS, DEFAULT_CHAR, DEFAULT_SKIN, SKIN_BOWL, SKIN_MAID, isSkinId, type SkinId } from '../config/characters.ts';
+import { DEFAULT_SKIN, SKIN_BOWL, SKIN_MAID, isSkinId, type SkinId } from '../config/characters.ts';
 import { loadSave, writeSave, metaBonus } from '../core/save.ts';
 import { sfx } from '../core/audio.ts';
 import { vibrate } from '../core/vibration.ts';
@@ -56,8 +56,6 @@ export class GameScene extends Phaser.Scene {
   private bgLayer!: BackgroundLayer;
   /** 本局起始背景下标（菜单选关或随机） */
   private bgStartIndex = 0;
-  /** v0.14.0 本局角色（菜单/大厅选定） */
-  private charId = DEFAULT_CHAR;
   /** v0.14.0 本局皮肤 */
   private skin: SkinId = DEFAULT_SKIN;
   private bgToast: Phaser.GameObjects.Text | null = null;
@@ -117,18 +115,16 @@ export class GameScene extends Phaser.Scene {
 
   constructor() { super('Game'); }
 
-  init(data: { bgStart?: number; charId?: string; skin?: string }): void {
+  init(data: { bgStart?: number; skin?: string }): void {
     // 起始背景：菜单选关(bgStart)优先，否则正常玩法随机轮换
     let start = -1;
     if (data && typeof data.bgStart === 'number') start = data.bgStart;
     if (start < 0 || start >= BG_ORDER.length) start = randomStartIndex();
     this.bgStartIndex = start;
-    // v0.14.0 角色/皮肤：以存档为准（菜单传参仅作调试钩子，不覆盖存档校验）
+    // v0.15.0 角色系统已移除（唯一鲸鱼娘），仅皮肤以存档为准
     const save = loadSave();
-    this.charId = (data && typeof data.charId === 'string' && CHARACTERS[data.charId]) ? data.charId : DEFAULT_CHAR;
     this.skin = (data && isSkinId(data.skin)) ? data.skin : DEFAULT_SKIN;
-    if (save.charId && CHARACTERS[save.charId]) this.charId = save.charId;
-    if (isSkinId(save.skin)) this.skin = save.skin;   // v0.14.0 女仆装/饭盆头均合法，以存档为准
+    if (isSkinId(save.skin)) this.skin = save.skin;   // 女仆装/饭盆头均合法，以存档为准
   }
 
   create(): void {
@@ -163,17 +159,16 @@ export class GameScene extends Phaser.Scene {
     border.lineStyle(6, 0x2a4a6b, 1);
     border.strokeRect(0, 0, WORLD_W, WORLD_H);
 
-    // v0.14.0 玩家属性 = 基础 × 角色修正 + 永久强化
+    // v0.15.0 玩家属性 = 鲸鱼娘基础属性 + 永久强化（角色系统已移除）
     const save = loadSave();
     const bonus = metaBonus(save);
-    const ch = CHARACTERS[this.charId] ?? CHARACTERS[DEFAULT_CHAR];
-    const baseHp = Math.max(30, PLAYER_BASE.hp + ch.mods.hp);
+    const baseHp = PLAYER_BASE.hp;
     this.stats = {
       maxHp: baseHp + bonus.maxHp,
       hp: baseHp + bonus.maxHp,
-      speed: PLAYER_BASE.speed * ch.mods.speedMult * bonus.speedMult,
-      pickup: PLAYER_BASE.pickup + ch.mods.pickup + bonus.pickup,
-      critChance: PLAYER_BASE.critChance + ch.mods.critChance + bonus.critChance,
+      speed: PLAYER_BASE.speed * bonus.speedMult,
+      pickup: PLAYER_BASE.pickup + bonus.pickup,
+      critChance: PLAYER_BASE.critChance + bonus.critChance,
       critMult: PLAYER_BASE.critMult,
       damageMult: PLAYER_BASE.damageMult * bonus.damageMult,
       xpMult: PLAYER_BASE.xpMult * bonus.xpMult
@@ -196,7 +191,7 @@ export class GameScene extends Phaser.Scene {
     this.eliteG = this.add.graphics().setDepth(12);
 
     this.weapons = new WeaponSystem(this);
-    this.weapons.addWeapon(ch.weaponId);   // v0.14.0 角色初始武器
+    this.weapons.addWeapon('rifle');   // v0.15.0 唯一角色鲸鱼娘初始武器
     // v0.10.0 命中特效：暴击火花（克制 3 粒）
     this.weapons.onHitFx = (e, crit) => {
       if (crit) this.deathFx?.spark(e.x, e.y, 3);
@@ -399,9 +394,8 @@ export class GameScene extends Phaser.Scene {
     const w = window as unknown as { __CHAR_STATE?: { charId: string; weaponId: string; skin: string; maxHp: number; speed: number }; __CURR_SKIN?: string };
     if (!w.__CHAR_STATE) return;
     w.__CURR_SKIN = this.skin;   // 悬浮菜单皮肤行文案读这里
-    const ch = CHARACTERS[this.charId] ?? CHARACTERS[DEFAULT_CHAR];
-    w.__CHAR_STATE.charId = this.charId;
-    w.__CHAR_STATE.weaponId = ch.weaponId;
+    w.__CHAR_STATE.charId = 'whale';   // v0.15.0 唯一角色鲸鱼娘
+    w.__CHAR_STATE.weaponId = 'rifle';
     w.__CHAR_STATE.skin = this.skin;
     w.__CHAR_STATE.maxHp = this.stats?.maxHp ?? 0;
     w.__CHAR_STATE.speed = this.stats?.speed ?? 0;

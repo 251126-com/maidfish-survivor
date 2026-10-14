@@ -1,25 +1,29 @@
-// 存档系统：localStorage 持久化局外成长（金币、永久强化等级、最佳记录、角色、皮肤）
+// 存档系统：localStorage 持久化局外成长（金币、永久强化等级、最佳记录、皮肤）
 // 容错分两种：存储不可用 → 内存兜底；存档损坏 → 重置为默认，不崩游戏
 //
-// v0.14.0 存档结构升级到 v2：
-//  - 新增 unlocked[]（已解锁角色）、charId（当前角色）、skin（当前皮肤）；
-//  - 旧版 v1 存档（无这三个字段）读取时自动补默认值，金币/强化/最佳记录不丢。
+// v0.14.0 存档结构升级到 v2：新增 unlocked[]（已解锁角色）、charId（当前角色）、skin。
+// v0.15.0 存档结构 v3：
+//  - 移除角色系统（仅保留鲸鱼娘）；旧 v2 存档中已解锁/选用的胖鱼娘/电鳗娘自动回落到鲸鱼娘；
+//  - 已花金币解锁的玩家按 v0.14.0 解锁价退回金币（fat=400 / eel=800），金币/强化/最佳记录不丢。
 
 const KEY = 'maidfish-survivor-save-v1';
 import { META_TREE } from '../config/upgrades.ts';
-import { CHARACTERS, CHARACTER_ORDER, DEFAULT_CHAR, DEFAULT_SKIN, isCharacterId, isSkinId } from '../config/characters.ts';
+import { DEFAULT_CHAR, DEFAULT_SKIN, isSkinId } from '../config/characters.ts';
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface SaveData {
-  version: number;                 // 当前 2
+  version: number;                 // 当前 3
   gold: number;
   meta: Record<string, number>;    // metaId -> 等级
   best: { time: number; kills: number; level: number };
-  unlocked: string[];              // v0.14.0 已解锁角色 id（默认角色恒在）
-  charId: string;                  // v0.14.0 当前使用角色
-  skin: string;                    // v0.14.0 当前皮肤（bowl / maid）
+  unlocked: string[];              // v0.15.0 恒为 [whale]（角色系统已移除，字段保留兼容旧存档）
+  charId: string;                  // v0.15.0 恒为 whale
+  skin: string;                    // 当前皮肤（bowl / maid）
 }
+
+// v0.15.0：被移除角色的 v0.14.0 解锁价（曾解锁即代表已付费，迁移时退回）
+const REMOVED_CHAR_REFUND: Record<string, number> = { fat: 400, eel: 800 };
 
 function defaultSave(): SaveData {
   return {
@@ -52,29 +56,30 @@ function sanitizeMeta(m: unknown): Record<string, number> {
   return out;
 }
 
-// v0.14.0: 已解锁角色只保留合法 id 且恒含默认角色；charId 必须已解锁；皮肤必须合法。
+// v0.15.0: 角色系统移除——unlocked 恒为 [whale]、charId 恒为 whale；
+// 旧存档里的 fat/eel 由调用方在计算金币退款前记录，本函数只保证「合法回落」。
 function sanitizeProgression(v: { unlocked?: unknown; charId?: unknown; skin?: unknown }): {
   unlocked: string[]; charId: string; skin: string;
 } {
-  const raw = Array.isArray(v.unlocked) ? v.unlocked : [];
-  const seen = new Set<string>();
-  for (const x of raw) {
-    if (isCharacterId(x) && !seen.has(x)) seen.add(x);
-  }
-  if (!seen.has(DEFAULT_CHAR)) seen.add(DEFAULT_CHAR);
-  const unlocked = CHARACTER_ORDER.filter(id => seen.has(id));
-  const charId = (typeof v.charId === 'string' && unlocked.includes(v.charId))
-    ? v.charId : DEFAULT_CHAR;
-  const skin = isSkinId(v.skin) ? v.skin : DEFAULT_SKIN;
-  return { unlocked, charId, skin };
+  return { unlocked: [DEFAULT_CHAR], charId: DEFAULT_CHAR, skin: isSkinId(v.skin) ? v.skin : DEFAULT_SKIN };
 }
 
-/** 每个字段都清洗为合法值，返回新对象（不污染调用方） */
+/** 每个字段都清洗为合法值，返回新对象（不污染调用方）。
+ *  v0.15.0：旧存档若含已移除角色（fat/eel，代表 v0.14.0 花金币解锁过），
+ *  在清洗前按解锁价退回金币（仅一次——清洗后 unlocked 不再含它们）。 */
 export function sanitizeSave(data: Partial<SaveData>): SaveData {
+  // 退款只认旧存档的原始 unlocked（含已移除角色 id）
+  let refund = 0;
+  if (Array.isArray(data.unlocked)) {
+    for (const id of data.unlocked) {
+      const cost = REMOVED_CHAR_REFUND[id];
+      if (cost !== undefined) refund += cost;
+    }
+  }
   const prog = sanitizeProgression({ unlocked: data.unlocked, charId: data.charId, skin: data.skin });
   return {
     version: SAVE_VERSION,
-    gold: finiteNonNegInt(data.gold, 0),
+    gold: finiteNonNegInt(data.gold, 0) + refund,
     meta: sanitizeMeta(data.meta),
     best: {
       time: finiteNonNegInt(data.best?.time, 0),
@@ -135,26 +140,7 @@ export function writeSave(data: SaveData): void {
   }
 }
 
-// ---- v0.14.0 角色/皮肤操作（纯逻辑，直接改内存对象，调用方负责 writeSave）----
-
-/** 解锁角色：已解锁返回 true；金币不足返回 false；成功扣款并加入 unlocked */
-export function unlockCharacter(s: SaveData, charId: string): boolean {
-  const def = CHARACTERS[charId];
-  if (!def) return false;
-  if (s.unlocked.includes(charId)) return true;
-  if (s.gold < def.unlockCost) return false;
-  s.gold -= def.unlockCost;
-  s.unlocked.push(charId);
-  s.charId = charId;   // 解锁即自动选用
-  return true;
-}
-
-/** 切换角色：必须已解锁 */
-export function selectCharacter(s: SaveData, charId: string): boolean {
-  if (!s.unlocked.includes(charId) || !CHARACTERS[charId]) return false;
-  s.charId = charId;
-  return true;
-}
+// ---- v0.15.0 皮肤操作（角色系统已移除，仅剩皮肤切档）----
 
 /** 切换皮肤：仅接受合法皮肤 id（免费、纯外观） */
 export function setSkin(s: SaveData, skinId: string): boolean {
